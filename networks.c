@@ -293,12 +293,16 @@ void	handle_network_msg(int sock) {
 	case MSG_TYPE_REPLY:
             printf("Reply message received\n");
 	    other_nodes[node].to = MSG_STATE_OK;		// Reply received - to stae is OK
+	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
 	    break;
 	case MSG_TYPE_PING:
 	    printf("Ping message received\n");
 	    other_nodes[node].from = MSG_STATE_RECEIVED;	// Ping request
 	    rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY);	// Send reply
-	    if (rc > 0) { other_nodes[node].from = MSG_STATE_OK;}	// and note as such
+	    if (rc > 0) { 
+		other_nodes[node].from = MSG_STATE_OK;		// and note as such
+		other_nodes[node].state = NET_STATE_UP;		// Set link status UP
+	    }
 	    break;
 	default:
 	    printf("Neither Ping nor Replay received\n");
