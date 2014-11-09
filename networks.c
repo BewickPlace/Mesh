@@ -67,7 +67,7 @@ static unsigned int protocol_port = 5359;			// IPv6 multicast port & address
 static struct in6_addr multicast_address;
 #define MULTICAST "ff02::cca6:c0f9:e182:5359"
 #define SIN_LEN 16
-#define SIN4_LEN 8
+#define SIN4_LEN 4
 
 const unsigned char zeros[SIN_LEN] = {0};			// IPv6 addresses
 const unsigned char ones[SIN_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -249,17 +249,15 @@ void	display_live_network() {
     char ipv4_string[40];
 
     inet_ntop(AF_INET, &my_ipv4_addr, (char *)&addr_string, 40);
-
     printf("\nNetwork Status at %s (%s)\n", my_hostname, addr_string);
 
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
             inet_ntop(AF_INET6, &other_nodes[i].address, (char *)&addr_string, 40);
             inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-	    printf("Node %d Address %s Name %s IPv4 %sstate:to:from %2d %2d %2d  ", i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
+	    printf("Node %d Address %s of %s (%s) state:to:from %2d %2d %2d\n", i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
 	}
     }
-    printf("\n");
 }
 
 //
