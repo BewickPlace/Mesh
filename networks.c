@@ -32,7 +32,7 @@ THE SOFTWARE.
 //#include <time.h>
 //#include <sys/types.h>
 #include <sys/socket.h>
-//#include <sys/uio.h>
+#include <sys/ioctl.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
@@ -44,24 +44,30 @@ THE SOFTWARE.
 
 int	send_network_msg(int sock, struct in6_addr *dest, int type);	// Local procedures
 int	find_live_node(struct in6_addr *src);
-void	add_live_node(struct in6_addr *src);
+int	add_live_node(struct in6_addr *src);
+void	update_my_ip_details();
+
+#define HOSTNAME_LEN	12					//Max supported host name length including null
 
 struct net {							// Network descriptior
 	struct in6_addr address;				// IPv6 Address
 	int state;						// Overall node state
 	int to;							// State of messages to node
 	int from;						// State of messages from node
+	char name[HOSTNAME_LEN];				// Node hostname
+	struct in_addr addripv4;				// IPv4 address
 	};
 
-static struct net other_nodes[NO_NETWORKS];			// Main network descriop
-
+static char my_hostname[HOSTNAME_LEN];				// My hostname
+struct in_addr my_ipv4_addr;					// & IPv4 address
+static struct net other_nodes[NO_NETWORKS];			// Main network descriptor
 static fd_set readfds;						// Network file descriptor
 
-
-static unsigned int protocol_port = 5359;
+static unsigned int protocol_port = 5359;			// IPv6 multicast port & address
 static struct in6_addr multicast_address;
 #define MULTICAST "ff02::cca6:c0f9:e182:5359"
 #define SIN_LEN 16
+#define SIN4_LEN 8
 
 const unsigned char zeros[SIN_LEN] = {0};			// IPv6 addresses
 const unsigned char ones[SIN_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
@@ -78,6 +84,8 @@ struct test_msg {						// Test message format
 	char hops;
 	char total_hops;
 	struct in6_addr dest;
+	char src_name[HOSTNAME_LEN];
+	struct in_addr src_addripv4;
 	};
 
 //int nodns = 0, af = 3, request_prefix_delegation = 0;
@@ -147,6 +155,8 @@ int	initialise_network() {
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_JOIN_GROUP, (char*)&mreq, sizeof(mreq));
     ERRORCHECK( rc<0, "set socket error\n", die);
 
+    update_my_ip_details();					// Update local host name & Ip address
+
     return(sock);
 
 ERRORBLOCK(die);
@@ -178,6 +188,7 @@ ENDERROR;
 int	check_live_nodes(int sock) {
     int i, rc, sent;
 
+    update_my_ip_details();					// Update local host name & Ip address
     sent = 0;
     i = -1;
     rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO); // send out a broadcast message to identify networks
@@ -190,6 +201,8 @@ int	check_live_nodes(int sock) {
             if (other_nodes[i].state == NET_STATE_DOWN) {	// if has been down for an entire period
 	   	other_nodes[i].state = NET_STATE_UNKNOWN;	// set state unknow and
                 memcpy(&other_nodes[i].address, &zeros, SIN_LEN); // Remove address
+                memcpy(&other_nodes[i].name, &zeros, HOSTNAME_LEN); // ... name
+                memcpy(&other_nodes[i].addripv4, &zeros, SIN4_LEN); // ... old IPv4 address
 	    } else {
 		if ((other_nodes[i].to == MSG_STATE_FAILED) &&	// if both to and from states are questionable
 		    (other_nodes[i].from == MSG_STATE_UNKNOWN)) {
@@ -233,12 +246,17 @@ void	expire_live_nodes() {
 void	display_live_network() {
     int i;
     char addr_string[40];
+    char ipv4_string[40];
 
-    printf("\nNetwork Status:  ");
+    inet_ntop(AF_INET, &my_ipv4_addr, (char *)&addr_string, 40);
+
+    printf("\nNetwork Status at %s (%s)\n", my_hostname, addr_string);
+
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
             inet_ntop(AF_INET6, &other_nodes[i].address, (char *)&addr_string, 40);
-	    printf("Node %d Address %s state:to:from %2d %2d %2d  ", i, addr_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
+            inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
+	    printf("Node %d Address %s Name %s IPv4 %sstate:to:from %2d %2d %2d  ", i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
 	}
     }
     printf("\n");
@@ -284,7 +302,8 @@ void	handle_network_msg(int sock) {
 
     if (memcmp(&message->dest, &multicast_address, SIN_LEN) == 0) { //if message was broadcast
 	printf("Broadcast message received\n");
-	add_live_node(&sin6.sin6_addr);				// Add the source as a valid node
+	node = add_live_node(&sin6.sin6_addr);			// Add the source as a valid node
+	ERRORCHECK( node < 0, "Network node error\n", EndError);
     } else {
 	node = find_live_node(&sin6.sin6_addr);			//
 	ERRORCHECK( node < 0, "Network node unknown\n", EndError);
@@ -308,6 +327,8 @@ void	handle_network_msg(int sock) {
 	    printf("Neither Ping nor Replay received\n");
 	}
     }
+    memcpy(other_nodes[node].name, message->src_name, HOSTNAME_LEN);	// Maintain Hostname and  allocated IPv4 Address
+    memcpy(&other_nodes[node].addripv4, &message->src_addripv4, SIN4_LEN);
 ENDERROR;
 }
 
@@ -332,6 +353,8 @@ int	send_network_msg(int sock, struct in6_addr *dest, int type ) {
     message.hops = 0;
     message.total_hops = 0;
     memcpy(&message.dest, dest, SIN_LEN);
+    memcpy(message.src_name, my_hostname, HOSTNAME_LEN);	// Include Hostname and  allocated IPv4 Address
+    memcpy(&message.src_addripv4, &my_ipv4_addr, SIN4_LEN);
 
     iovec[0].iov_base = (void *)&message;
     iovec[0].iov_len = sizeof(message);
@@ -372,7 +395,7 @@ int	find_live_node(struct in6_addr *src) {
 //
 //	Add a new node to the node list
 //
-void	add_live_node(struct in6_addr *src) {
+int	add_live_node(struct in6_addr *src) {
     int node;
 
     node = find_live_node(src);					// Check node doesn't exist
@@ -385,5 +408,37 @@ void	add_live_node(struct in6_addr *src) {
     other_nodes[node].state = NET_STATE_UP;			// Set link and message states
     other_nodes[node].to = MSG_STATE_UNKNOWN;
     other_nodes[node].from = MSG_STATE_UNKNOWN;
+ENDERROR;
+    return(node);
+}
+
+//
+//	Update local host Name & IPv4 Address
+//
+void	update_my_ip_details() {
+    int rc;
+    int fd;							// Network file descriptor
+    struct ifreq ifr;						// Interface request record
+
+
+    rc = gethostname(my_hostname, HOSTNAME_LEN-1);		// Obtain local host name
+    ERRORCHECK(rc < 0, "Invalid host name\n", EndError);
+
+    my_hostname[HOSTNAME_LEN-1] = '\0';				// Endure name  string terminated
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);			// find IPv4 socket
+    ERRORCHECK(fd < 0, "IPv4 Socket error\n", ErrnoError);
+    ifr.ifr_addr.sa_family = AF_INET;
+    strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
+
+    rc = ioctl(fd, SIOCGIFADDR, &ifr);
+    ERRORCHECK(rc < 0, "Invalid host name\n", ErrnoError);
+    close(fd);
+
+    memcpy(&my_ipv4_addr, &(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr), SIN4_LEN);
+
+ERRORBLOCK(ErrnoError);
+    printf("Errno (%d)\n", errno);
+    close(fd);
 ENDERROR;
 }
