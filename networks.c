@@ -46,6 +46,7 @@ int	send_network_msg(int sock, struct in6_addr *dest, int type);	// Local proced
 int	find_live_node(struct in6_addr *src);
 int	add_live_node(struct in6_addr *src);
 void	update_my_ip_details();
+void	cancel_reply_timer(struct timer_list *timers);
 
 #define HOSTNAME_LEN	12					//Max supported host name length including null
 
@@ -255,7 +256,7 @@ void	display_live_network() {
 	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
             inet_ntop(AF_INET6, &other_nodes[i].address, (char *)&addr_string, 40);
             inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-	    printf("Node %d Address %s of %s (%s) state:to:from %2d %2d %2d\n", i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
+	    printf("Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d\n", i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
 	}
     }
 }
@@ -272,7 +273,7 @@ int	check_network_msg(int sock) {
 //
 //	Handle Network Message
 //
-void	handle_network_msg(int sock) {
+void	handle_network_msg(int sock, struct timer_list *timers) {
     char buf[MAX_BUFFER];					// Full buffer
     struct test_msg *message = (struct test_msg*)&buf;		// Our Test Msg mapped over full buffer
     struct iovec iovec;
@@ -311,6 +312,8 @@ void	handle_network_msg(int sock) {
             printf("Reply message received\n");
 	    other_nodes[node].to = MSG_STATE_OK;		// Reply received - to stae is OK
 	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
+
+	    cancel_reply_timer(timers);				// Cancel reply timer if all now received
 	    break;
 	case MSG_TYPE_PING:
 	    printf("Ping message received\n");
@@ -438,5 +441,20 @@ void	update_my_ip_details() {
 ERRORBLOCK(ErrnoError);
     printf("Errno (%d)\n", errno);
     close(fd);
+ENDERROR;
+}
+
+//
+//	Cancel Reply Timer if all now received
+//
+void	cancel_reply_timer(struct timer_list *timers) {
+    int i;
+
+    for(i=0; i < NO_NETWORKS; i++) {			// Check all valid nodes for outstanding reply
+	if ((memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) &&
+	    (other_nodes[i].to == MSG_STATE_SENT)) { goto EndError; } // if we find one - bottle out
+    }
+    cancel_timer(timers, TIMER_REPLY);				// None found we can cancel the timer
+
 ENDERROR;
 }

@@ -35,6 +35,8 @@ void    initialise_timers(struct timer_list *timers);
 
 void	add_timer(struct timer_list *timers, int timer, int delay);
 
+void	cancel_timer(struct timer_list *timers, int timer);
+
 struct timeval *next_timers(struct timer_list *timers);
 
 int	check_timers(struct timer_list *timers);

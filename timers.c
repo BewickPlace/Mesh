@@ -63,6 +63,14 @@ void	 add_timer(struct timer_list *timers, int timer, int delay) {
 	}
 
 	//
+	//	Cancel the chosen timer to the list
+	//
+void	 cancel_timer(struct timer_list *timers, int timer) {
+
+	timers->timers[timer].tv_sec = 0;		// Set chosen timer to zero
+	}
+
+	//
 	//	Return the address of the next timer due
 	//
 struct timeval *next_timers(struct timer_list *timers) {

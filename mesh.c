@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
 	wait_on_network_timers(protocol_socket, &timers); // Wait for message or timer expiory
 
 	if (check_network_msg(protocol_socket)) {	// If a message is available
-	    handle_network_msg(protocol_socket); 	// handle the network message
+	    handle_network_msg(protocol_socket, &timers);  // handle the network message
 	}
 	switch (check_timers(&timers)) {		// check which timer has expired
 	case TIMER_REFRESH:
