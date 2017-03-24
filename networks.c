@@ -28,7 +28,7 @@ THE SOFTWARE.
 //#include <signal.h>
 //#include <assert.h>
 #include <fcntl.h>
-//#include <sys/time.h>
+#include <sys/time.h>
 //#include <time.h>
 //#include <sys/types.h>
 #include <sys/socket.h>
@@ -42,11 +42,12 @@ THE SOFTWARE.
 #include "timers.h"
 #include "networks.h"
 
-int	send_network_msg(int sock, struct in6_addr *dest, int type);	// Local procedures
+int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay);	// Local procedures
 int	find_live_node(struct in6_addr *src);
 int	add_live_node(struct in6_addr *src);
 void	update_my_ip_details();
 void	cancel_reply_timer(struct timer_list *timers);
+void	handle_delay_calc(int node, struct timeval t1, struct timeval t2, struct timeval t3, struct timeval t4, time_t remote_delay);
 
 #define HOSTNAME_LEN	12					//Max supported host name length including null
 
@@ -57,6 +58,8 @@ struct net {							// Network descriptior
 	int from;						// State of messages from node
 	char name[HOSTNAME_LEN];				// Node hostname
 	struct in_addr addripv4;				// IPv4 address
+	time_t delay;						// Round trip delay (ms)
+	time_t remote_delay;					// Round trip delay (ms) seen by other node
 	};
 
 static char my_hostname[HOSTNAME_LEN];				// My hostname
@@ -87,6 +90,8 @@ struct test_msg {						// Test message format
 	struct in6_addr dest;
 	char src_name[HOSTNAME_LEN];
 	struct in_addr src_addripv4;
+	struct timeval t1, t2, t3, t4;				// NTP delay calculation timestamps
+	time_t  remotedelay;					// other nodes view of current delay
 	};
 
 //int nodns = 0, af = 3, request_prefix_delegation = 0;
@@ -192,7 +197,7 @@ int	check_live_nodes(int sock) {
     update_my_ip_details();					// Update local host name & Ip address
     sent = 0;
     i = -1;
-    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO); // send out a broadcast message to identify networks
+    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO, 0); // send out a broadcast message to identify networks
     ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
 
 
@@ -209,7 +214,7 @@ int	check_live_nodes(int sock) {
 		    (other_nodes[i].from == MSG_STATE_UNKNOWN)) {
 		    other_nodes[i].state = NET_STATE_DOWN;	// Mark network as likely to be down
             	}
-	        rc = send_network_msg(sock, &other_nodes[i].address, MSG_TYPE_PING); // send out a specific message to this node
+	        rc = send_network_msg(sock, &other_nodes[i].address, MSG_TYPE_PING, 0); // send out a specific message to this node
 	        ERRORCHECK( rc < 0, "Network send error\n", SendError);
 	        other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
                 other_nodes[i].from = MSG_STATE_UNKNOWN;		// and received status unknown
@@ -256,7 +261,9 @@ void	display_live_network() {
 	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
             inet_ntop(AF_INET6, &other_nodes[i].address, (char *)&addr_string, 40);
             inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-	    printf("Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d\n", i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from);
+	    printf("Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d  delays %lld(l) %lld(r)\n",
+			i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from,
+		    	(long long)other_nodes[i].delay, (long long)other_nodes[i].remote_delay);
 	}
     }
 }
@@ -310,6 +317,8 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
 	switch (message->type) {				// Handle different message types
 	case MSG_TYPE_REPLY:
             printf("Reply message received\n");
+	    gettimeofday(&(message->t4), NULL);			// T4 - Received timestamp
+	    handle_delay_calc( node, message->t1, message->t2, message->t3, message->t4, message->remotedelay);
 	    other_nodes[node].to = MSG_STATE_OK;		// Reply received - to stae is OK
 	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
 
@@ -317,8 +326,9 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
 	    break;
 	case MSG_TYPE_PING:
 	    printf("Ping message received\n");
+	    gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
 	    other_nodes[node].from = MSG_STATE_RECEIVED;	// Ping request
-	    rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY);	// Send reply
+	    rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay);	// Send reply - with our view of delay
 	    if (rc > 0) { 
 		other_nodes[node].from = MSG_STATE_OK;		// and note as such
 		other_nodes[node].state = NET_STATE_UP;		// Set link status UP
@@ -337,7 +347,7 @@ ENDERROR;
 //
 //	Send a network message
 //
-int	send_network_msg(int sock, struct in6_addr *dest, int type ) {
+int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay) {
     int rc;
     struct iovec iovec[2];
     struct msghdr msg;
@@ -356,6 +366,13 @@ int	send_network_msg(int sock, struct in6_addr *dest, int type ) {
     memcpy(&message.dest, dest, SIN_LEN);
     memcpy(message.src_name, my_hostname, HOSTNAME_LEN);	// Include Hostname and  allocated IPv4 Address
     memcpy(&message.src_addripv4, &my_ipv4_addr, SIN4_LEN);
+
+    if (type == MSG_TYPE_PING) {
+	    gettimeofday(&(message.t1), NULL);			// T1 - Sent timestamp
+    } else if (type == MSG_TYPE_REPLY) {
+	    gettimeofday(&(message.t3), NULL);			// T3 - Sent timestamp
+    }
+    message.remotedelay = node_delay;				// include view of the delay
 
     iovec[0].iov_base = (void *)&message;
     iovec[0].iov_len = sizeof(message);
@@ -409,6 +426,8 @@ int	add_live_node(struct in6_addr *src) {
     other_nodes[node].state = NET_STATE_UP;			// Set link and message states
     other_nodes[node].to = MSG_STATE_UNKNOWN;
     other_nodes[node].from = MSG_STATE_UNKNOWN;
+    other_nodes[node].delay = 0;
+    other_nodes[node].remote_delay = 0;
 ENDERROR;
     return(node);
 }
@@ -457,4 +476,26 @@ void	cancel_reply_timer(struct timer_list *timers) {
     cancel_timer(timers, TIMER_REPLY);				// None found we can cancel the timer
 
 ENDERROR;
+}
+
+//
+//	Handle the delay calculation using NTP algorythm
+//
+//	delay = (T4-T1) - (T3-T2)
+//
+
+void	handle_delay_calc(int node, struct timeval t1, struct timeval t2, struct timeval t3, struct timeval t4, time_t remote_delay) {
+
+    time_t delay;
+
+    timersub(&t4, &t1, &t4);				// T4-T1
+    timersub(&t3, &t2, &t3);				// T3-T1
+    timersub(&t4, &t3, &t4);				// Delay in timeval
+
+    delay = (t4.tv_usec);			// convert to ms
+//    delay = (t4.tv_usec / 1000);			// convert to ms
+//    delay = (t4.tv_sec * 1000) + delay;
+
+    other_nodes[node].delay = delay;			// record the delay for this node
+    other_nodes[node].remote_delay = remote_delay;	// and seen by the counterpart node
 }
