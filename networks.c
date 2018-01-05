@@ -49,7 +49,7 @@ void	update_my_ip_details();
 void	cancel_reply_timer(struct timer_list *timers);
 void	handle_delay_calc(int node, struct timeval t1, struct timeval t2, struct timeval t3, struct timeval t4, time_t remote_delay);
 
-#define HOSTNAME_LEN	12					//Max supported host name length including null
+#define HOSTNAME_LEN	14					//Max supported host name length including null
 
 struct net {							// Network descriptior
 	struct in6_addr address;				// IPv6 Address
@@ -178,12 +178,14 @@ ENDERROR;
 void	wait_on_network_timers(int sock, struct timer_list *timers) {
     int rc;
     struct timeval *wait;
-								// attempt read on socket
-    FD_SET(sock, &readfds);					// timeout on next timer
     wait = next_timers(timers);
     printf("Wait on read or timeout %llds\n", (long long)wait->tv_sec);
-    rc = select(sock + 1, &readfds, NULL, NULL, wait);
-    ERRORCHECK( (rc < 0) && (errno != EINTR), "Message wait on socket error\n", EndError);
+    if (wait->tv_sec > 0L) {					// As long as next timer not expired
+								// attempt read on socket
+	FD_SET(sock, &readfds);					// timeout on next timer
+	rc = select(sock + 1, &readfds, NULL, NULL, wait);
+	ERRORCHECK( (rc < 0) && (errno != EINTR), "Message wait on socket error\n", EndError);
+    }
 
 ENDERROR;
 }
