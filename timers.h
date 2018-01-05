@@ -27,7 +27,6 @@ THE SOFTWARE.
 
 struct timer_list {					// Timer datastructure
 		struct timeval timers[NO_TIMERS];	// Array of individual timers
-		struct timeval last_time;		// Base time when timers are valid
 		struct timeval wait_time;		// wait timer
 	};
 

@@ -45,21 +45,25 @@ THE SOFTWARE.
 #include "errorcheck.h"
 #include "timers.h"
 
+#define	MAXIMUM_WAIT_TIME 100
+
 	//
 	//	Initialise the timer data structure
 	//
 void    initialise_timers(struct timer_list *timers) {
 
 	memset(timers, 0, sizeof(*timers));		// Set all timers to zero (no timer running)
-        gettimeofday(&(timers->last_time), NULL);	// Record the current time as timer base
+	timers->wait_time.tv_sec = MAXIMUM_WAIT_TIME;	// & default wait timer
 	}
 
 	//
 	//	Add the chosen timer to the list
 	//
 void	 add_timer(struct timer_list *timers, int timer, int delay) {
+	struct timeval now;
 
-	timers->timers[timer].tv_sec = (time_t)delay;	// Set chosen timer
+	gettimeofday(&now, NULL);
+	timers->timers[timer].tv_sec = now.tv_sec + (time_t)delay;	// Set chosen timer
 	}
 
 	//
@@ -75,15 +79,18 @@ void	 cancel_timer(struct timer_list *timers, int timer) {
 	//
 struct timeval *next_timers(struct timer_list *timers) {
 	int i;
-	time_t lowest_time = 999;
+	time_t lowest_time = MAXIMUM_WAIT_TIME;
+	struct timeval now;
+
+	gettimeofday(&now, NULL);
 
 	for (i=0; i < NO_TIMERS; i++) {			// Check all of the timers looking for lowest time value
 	    if ((timers->timers[i].tv_sec != 0) &&	// zero is not included as that is expired
-	        (timers->timers[i].tv_sec < lowest_time)) {
-	       lowest_time = timers->timers[i].tv_sec;	// Record lowest time
-	       timers->wait_time.tv_sec = lowest_time;  // Copy to timer slot
+	        ((timers->timers[i].tv_sec - now.tv_sec) < lowest_time)) {
+		lowest_time = timers->timers[i].tv_sec - now.tv_sec; // Record lowest time
 	    }
 	}
+	timers->wait_time.tv_sec = lowest_time;  	// Copy to timer slot
 	return(&timers->wait_time);			// Return address of lowest timer - NULL if none valid
 	}
 
@@ -92,24 +99,19 @@ struct timeval *next_timers(struct timer_list *timers) {
 	//
 int	check_timers(struct timer_list *timers) {
 	int i;
-	time_t diff;
 	struct timeval now;
 	int expired_timer = TIMER_NONE;
 
 	gettimeofday(&now, NULL);			// Get current time
-	diff = now.tv_sec - timers->last_time.tv_sec;	// Work out difference from last baseline
 
 	for (i=0; i < NO_TIMERS; i++) {			// Check all valid timers
-	    if (timers->timers[i].tv_sec != 0) {
-		 if (diff < timers->timers[i].tv_sec) {  // If timer if not due to expire
-		    timers->timers[i].tv_sec = timers->timers[i].tv_sec - diff;	// Decrement timer
-		 } else {
-		    timers->timers[i].tv_sec = 0;	// Expire timer
-		    expired_timer = i;			// and note index of timer
-	         }
+	    if ((timers->timers[i].tv_sec != 0) &&
+	        (now.tv_sec >= timers->timers[i].tv_sec)) {  // If timer is due to expire
+		timers->timers[i].tv_sec = 0;		// Expire timer
+		expired_timer = i;			// and note index of timer
+		break;
 	    }
 	}
-	timers->last_time.tv_sec = now.tv_sec;		// Record new base time
 	return(expired_timer);
 }
 
@@ -118,10 +120,17 @@ int	check_timers(struct timer_list *timers) {
 	//
 void	display_timers(struct timer_list *timers) {
 	int i;
+	struct timeval now;
+
+	gettimeofday(&now, NULL);
 
 	printf("Timers:  ");
 	for (i=0; i < NO_TIMERS; i++) {
-	    printf("%d - value %lld  ", i, (long long)timers->timers[i].tv_sec);
+	    if (timers->timers[i].tv_sec != 0) {
+		printf("%d - value %ld  ", i, (long)(timers->timers[i].tv_sec - now.tv_sec));
+	    } else {
+		printf("%d - value %ld  ", i, 0L);
+	    }
 	}
-	printf("valid at %llds\n", (long long)timers->last_time.tv_sec);
+	printf("\n");
 }
