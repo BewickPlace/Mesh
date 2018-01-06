@@ -21,7 +21,7 @@ THE SOFTWARE.
 */
 
 #define ERRORCHECK(Condition, Message, Label) \
-	if (Condition) { printf(Message); goto Label; }
+	if (Condition) { warn(Message); goto Label; }
 
 #define ERRORBLOCK(Label) \
 	goto EndError;    \
@@ -29,6 +29,13 @@ THE SOFTWARE.
 
 #define ENDERROR  EndError: ;
 
+#define	DEBUG_ESSENTIAL	0					// Debug error levels (set by command line)
+#define	DEBUG_TRACE	1
+#define	DEBUG_DETAIL	2
 
+extern int debuglev;
+void die(char *format, ...);
+void warn(char *format, ...);
+void debug(int level, char *format, ...);
 
 
