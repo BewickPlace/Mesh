@@ -43,7 +43,7 @@ THE SOFTWARE.
 
 #include "errorcheck.h"
 
-int	debuglev = DEBUG_ESSENTIAL		// Default to only essential debug level (unless changed by command line)
+int	debuglev = DEBUG_ESSENTIAL;		// Default to only essential debug level (unless changed by command line)
 
 void die(char *format, ...) {
     fprintf(stderr, "FATAL: ");
