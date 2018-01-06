@@ -122,6 +122,7 @@ int main(int argc, char **argv) {
     struct timer_list timers;				// Timers
 
     parse_options(argc, argv);				// Parse command line parameters
+    debug(DEBUG_ESSENTIAL, "Mesh starting in mode: %d\n", operating_mode);
 
     protocol_socket =  initialise_network();		// Initialise the network details
     initialise_timers(&timers);				// and set all timers
@@ -131,7 +132,6 @@ int main(int argc, char **argv) {
     }
 
     while (!shutdown) {					// While NOT shutdown
-	printf("====================\n");
 	wait_on_network_timers(protocol_socket, &timers); // Wait for message or timer expiory
 
 	if (check_network_msg(protocol_socket)) {	// If a message is available
@@ -157,9 +157,10 @@ int main(int argc, char **argv) {
 	default:
 	    break;
 	}
-	display_live_network();
-//	display_timers(&timers);
+	DEBUG_FUNCTION( DEBUG_DETAIL, display_live_network());
+	DEBUG_FUNCTION( DEBUG_DETAIL, display_timers(&timers));
     }
+    debug(DEBUG_ESSENTIAL, "Mesh node shut down\n");
     return 0;
 }
 

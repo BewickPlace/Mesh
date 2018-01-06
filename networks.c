@@ -166,7 +166,7 @@ int	initialise_network() {
     return(sock);
 
 ERRORBLOCK(die);
-    printf("Error %d errno(%d)\n", rc, errno);
+    warn("Error %d errno(%d)", rc, errno);
     close(sock);
 ENDERROR;
     return(-1);
@@ -179,7 +179,7 @@ void	wait_on_network_timers(int sock, struct timer_list *timers) {
     int rc;
     struct timeval *wait;
     wait = next_timers(timers);
-    printf("Wait on read or timeout %llds\n", (long long)wait->tv_sec);
+    debug(DEBUG_DETAIL, "Wait on read or timeout %llds\n", (long long)wait->tv_sec);
     if (wait->tv_sec > 0L) {					// As long as next timer not expired
 								// attempt read on socket
 	FD_SET(sock, &readfds);					// timeout on next timer
@@ -201,7 +201,7 @@ void	broadcast_network(int sock) {
     ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
 
 ERRORBLOCK(SendError);
-    printf("Send error: Node %d, send error %d errno(%d)\n", i, rc, errno);
+    warn("Send error: Node %d, send error %d errno(%d)", i, rc, errno);
 ENDERROR;
 }
 
@@ -210,6 +210,7 @@ ENDERROR;
 //
 int	check_live_nodes(int sock) {
     int i, rc, sent;
+    char ipv4_string[40];
 
     update_my_ip_details();					// Update local host name & Ip address
     sent = 0;
@@ -226,6 +227,8 @@ int	check_live_nodes(int sock) {
 		if ((other_nodes[i].to == MSG_STATE_FAILED) &&	// if both to and from states are questionable
 		    (other_nodes[i].from == MSG_STATE_UNKNOWN)) {
 		    other_nodes[i].state = NET_STATE_DOWN;	// Mark network as likely to be down
+		    inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
+		    debug(DEBUG_TRACE, "Link DOWN to node: %s (%s)\n", other_nodes[i].name, ipv4_string);
             	}
 	        rc = send_network_msg(sock, &other_nodes[i].address, MSG_TYPE_PING, 0); // send out a specific message to this node
 	        ERRORCHECK( rc < 0, "Network send error\n", SendError);
@@ -236,7 +239,7 @@ int	check_live_nodes(int sock) {
 	}
     }
 ERRORBLOCK(SendError);
-    printf("Send error: Node %d, send error %d errno(%d)\n", i, rc, errno);
+    warn("Send error: Node %d, send error %d errno(%d)", i, rc, errno);
 ENDERROR;
     return(sent);
 }
@@ -268,13 +271,13 @@ void	display_live_network() {
     char ipv4_string[40];
 
     inet_ntop(AF_INET, &my_ipv4_addr, (char *)&addr_string, 40);
-    printf("\nNetwork Status at %s (%s)\n", my_hostname, addr_string);
+    debug(DEBUG_DETAIL, "Network Status at %s (%s)\n", my_hostname, addr_string);
 
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
             inet_ntop(AF_INET6, &other_nodes[i].address, (char *)&addr_string, 40);
             inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-	    printf("Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d  delays %lld(l) %lld(r)\n",
+	    debug(DEBUG_DETAIL, "Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d  delays %lld(l) %lld(r)\n",
 			i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from,
 		    	(long long)other_nodes[i].delay, (long long)other_nodes[i].remote_delay);
 	}
@@ -300,6 +303,7 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
     struct msghdr msg;
     struct sockaddr_in6 sin6;
     int rc, node;
+    char ipv4_string[40];
 
     memset(&msg, 0, sizeof(msg));				//Initialise message header
     iovec.iov_base = buf;
@@ -328,29 +332,31 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
 
     switch (message->type) {					// Handle different message types
     case MSG_TYPE_ECHO:
-	printf("Broadcast message received\n");			// Nothing else to do as have added live  node
+	debug(DEBUG_DETAIL, "Broadcast message received\n");	// Nothing else to do as have added live  node
 	break;
     case MSG_TYPE_REPLY:
-	printf("Reply message received\n");
+	debug(DEBUG_DETAIL, "Reply message received\n");
 	gettimeofday(&(message->t4), NULL);			// T4 - Received timestamp
 	handle_delay_calc( node, message->t1, message->t2, message->t3, message->t4, message->remotedelay);
 	other_nodes[node].to = MSG_STATE_OK;			// Reply received - to stae is OK
-	other_nodes[node].state = NET_STATE_UP;			// Set link status UP
-
+	if (other_nodes[node].state != NET_STATE_UP) {		// Link state changes
+	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
+            inet_ntop(AF_INET, &message->src_addripv4, (char *)&ipv4_string, 40);
+	    debug(DEBUG_TRACE, "Link UP   to nodet: %s (%s)\n", message->src_name, ipv4_string);
+	}
 	cancel_reply_timer(timers);				// Cancel reply timer if all now received
 	break;
     case MSG_TYPE_PING:
-	printf("Ping message received\n");
+	debug(DEBUG_DETAIL, "Ping message received\n");
 	gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
 	other_nodes[node].from = MSG_STATE_RECEIVED;		// Ping request
 	rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay);	// Send reply - with our view of delay
-	if (rc > 0) { 
+	if (rc > 0) {
 	    other_nodes[node].from = MSG_STATE_OK;		// and note as such
-	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
 	}
 	break;
     default:
-	printf("Neither Ping nor Replay received\n");
+	warn("Neither Ping nor Replay received");
     }
     memcpy(other_nodes[node].name, message->src_name, HOSTNAME_LEN);	// Maintain Hostname and  allocated IPv4 Address
     memcpy(&other_nodes[node].addripv4, &message->src_addripv4, SIN4_LEN);
@@ -370,7 +376,7 @@ int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_dela
     char addr_string[40];
 
     inet_ntop(AF_INET6, dest, (char *)&addr_string, 40);
-    printf("Send message - Socket %d Address %s Type %d\n", sock, addr_string, type);
+    debug(DEBUG_DETAIL, "Send message - Socket %d Address %s Type %d\n", sock, addr_string, type);
 
     memset(&message, 0, sizeof(message));
     message.type = type;
@@ -437,7 +443,7 @@ int	add_live_node(struct in6_addr *src) {
     ERRORCHECK( node < 0, "Node list full!!\n", EndError);
 
     memcpy(&other_nodes[node].address, src, SIN_LEN);		// Record address &
-    other_nodes[node].state = NET_STATE_UP;			// Set link and message states
+    other_nodes[node].state = NET_STATE_UNKNOWN;		// Set link and message states
     other_nodes[node].to = MSG_STATE_UNKNOWN;
     other_nodes[node].from = MSG_STATE_UNKNOWN;
     other_nodes[node].delay = 0;
@@ -472,7 +478,7 @@ void	update_my_ip_details() {
     memcpy(&my_ipv4_addr, &(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr), SIN4_LEN);
 
 ERRORBLOCK(ErrnoError);
-    printf("Errno (%d)\n", errno);
+    warn("Errno (%d)", errno);
     close(fd);
 ENDERROR;
 }

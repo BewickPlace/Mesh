@@ -38,4 +38,5 @@ void die(char *format, ...);
 void warn(char *format, ...);
 void debug(int level, char *format, ...);
 
-
+#define DEBUG_FUNCTION(Level, Function) \
+	if (Level <= debuglev) { Function; }

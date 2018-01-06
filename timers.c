@@ -124,13 +124,11 @@ void	display_timers(struct timer_list *timers) {
 
 	gettimeofday(&now, NULL);
 
-	printf("Timers:  ");
 	for (i=0; i < NO_TIMERS; i++) {
 	    if (timers->timers[i].tv_sec != 0) {
-		printf("%d - value %ld  ", i, (long)(timers->timers[i].tv_sec - now.tv_sec));
+		debug(DEBUG_DETAIL, "Timer: %d - value %ld\n", i, (long)(timers->timers[i].tv_sec - now.tv_sec));
 	    } else {
-		printf("%d - value %ld  ", i, 0L);
+		debug(DEBUG_DETAIL, "Timer: %d - value %ld\n", i, 0L);
 	    }
 	}
-	printf("\n");
 }
