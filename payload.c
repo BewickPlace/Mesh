@@ -58,11 +58,11 @@ void	handle_app_msg(int sock, struct payload_pkt *payload, int payload_len) {
 
     if( payload_len == 0) { return; }		// skip out if nothing to do
 
-    debug(DEBUG_ESSENTIAL, "Payload Received of type %d\n", payload->type, payload->data);
+    debug(DEBUG_ESSENTIAL, "Payload Received of type %d %s, len %d\n", payload->type, payload->data, payload_len);
 }
 
 void	handle_app_timer(int sock) {
-    struct payload_pkt app_data = {0,"ABCDEFGHIJK\n" };
+    struct payload_pkt app_data = {PAYLOAD_TYPE,"ABCDEFGHIJK\0" };
     int node = 0;
 
     debug(DEBUG_ESSENTIAL, "Handle App timeout\n");
