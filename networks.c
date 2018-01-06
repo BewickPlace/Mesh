@@ -342,7 +342,7 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
 	if (other_nodes[node].state != NET_STATE_UP) {		// Link state changes
 	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
             inet_ntop(AF_INET, &message->src_addripv4, (char *)&ipv4_string, 40);
-	    debug(DEBUG_TRACE, "Link UP   to nodet: %s (%s)\n", message->src_name, ipv4_string);
+	    debug(DEBUG_TRACE, "Link UP   to node: %s (%s)\n", message->src_name, ipv4_string);
 	}
 	cancel_reply_timer(timers);				// Cancel reply timer if all now received
 	break;
