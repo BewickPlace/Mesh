@@ -36,6 +36,8 @@ int	initialise_network();
 
 void	wait_on_network_timers(int sock, struct timer_list *timers);
 
+void	broadcast_network(int sock);
+
 int	check_live_nodes(int sock);
 
 void	expire_live_nodes();

@@ -191,6 +191,21 @@ ENDERROR;
 }
 
 //
+//	Broadcast to all nodes
+//
+void	broadcast_network(int sock) {
+    int i, rc;
+
+    i = -1;
+    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO, 0); // send out a broadcast message to identify networks
+    ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
+
+ERRORBLOCK(SendError);
+    printf("Send error: Node %d, send error %d errno(%d)\n", i, rc, errno);
+ENDERROR;
+}
+
+//
 //	Check live networks by sending out messages
 //
 int	check_live_nodes(int sock) {
@@ -198,10 +213,6 @@ int	check_live_nodes(int sock) {
 
     update_my_ip_details();					// Update local host name & Ip address
     sent = 0;
-    i = -1;
-    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO, 0); // send out a broadcast message to identify networks
-    ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
-
 
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if (memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
@@ -308,37 +319,38 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
 		(message->type != MSG_TYPE_REPLY), "Unrecognised message type\n", EndError);
     ERRORCHECK( (message->version != MSG_VERSION), "Incompatible message version\n", EndError);
 
-    if (memcmp(&message->dest, &multicast_address, SIN_LEN) == 0) { //if message was broadcast
-	printf("Broadcast message received\n");
+    node = find_live_node(&sin6.sin6_addr);			// Check if this node is known
+    if (node < 0) {						// if unknown
 	node = add_live_node(&sin6.sin6_addr);			// Add the source as a valid node
-	ERRORCHECK( node < 0, "Network node error\n", EndError);
-    } else {
-	node = find_live_node(&sin6.sin6_addr);			//
-	ERRORCHECK( node < 0, "Network node unknown\n", EndError);
+	add_timer(timers, TIMER_PING, 1);			// initiate PINGs
+    }
+    ERRORCHECK( node < 0, "Network node unknown\n", EndError);
 
-	switch (message->type) {				// Handle different message types
-	case MSG_TYPE_REPLY:
-            printf("Reply message received\n");
-	    gettimeofday(&(message->t4), NULL);			// T4 - Received timestamp
-	    handle_delay_calc( node, message->t1, message->t2, message->t3, message->t4, message->remotedelay);
-	    other_nodes[node].to = MSG_STATE_OK;		// Reply received - to stae is OK
+    switch (message->type) {					// Handle different message types
+    case MSG_TYPE_ECHO:
+	printf("Broadcast message received\n");			// Nothing else to do as have added live  node
+	break;
+    case MSG_TYPE_REPLY:
+	printf("Reply message received\n");
+	gettimeofday(&(message->t4), NULL);			// T4 - Received timestamp
+	handle_delay_calc( node, message->t1, message->t2, message->t3, message->t4, message->remotedelay);
+	other_nodes[node].to = MSG_STATE_OK;			// Reply received - to stae is OK
+	other_nodes[node].state = NET_STATE_UP;			// Set link status UP
+
+	cancel_reply_timer(timers);				// Cancel reply timer if all now received
+	break;
+    case MSG_TYPE_PING:
+	printf("Ping message received\n");
+	gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
+	other_nodes[node].from = MSG_STATE_RECEIVED;		// Ping request
+	rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay);	// Send reply - with our view of delay
+	if (rc > 0) { 
+	    other_nodes[node].from = MSG_STATE_OK;		// and note as such
 	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
-
-	    cancel_reply_timer(timers);				// Cancel reply timer if all now received
-	    break;
-	case MSG_TYPE_PING:
-	    printf("Ping message received\n");
-	    gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
-	    other_nodes[node].from = MSG_STATE_RECEIVED;	// Ping request
-	    rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay);	// Send reply - with our view of delay
-	    if (rc > 0) { 
-		other_nodes[node].from = MSG_STATE_OK;		// and note as such
-		other_nodes[node].state = NET_STATE_UP;		// Set link status UP
-	    }
-	    break;
-	default:
-	    printf("Neither Ping nor Replay received\n");
 	}
+	break;
+    default:
+	printf("Neither Ping nor Replay received\n");
     }
     memcpy(other_nodes[node].name, message->src_name, HOSTNAME_LEN);	// Maintain Hostname and  allocated IPv4 Address
     memcpy(&other_nodes[node].addripv4, &message->src_addripv4, SIN4_LEN);

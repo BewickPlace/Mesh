@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
     protocol_socket =  initialise_network();		// Initialise the network details
     initialise_timers(&timers);				// and set all timers
 
-    add_timer(&timers, TIMER_REFRESH, 20);		// Set to refresh network very 10 seconds
+    add_timer(&timers, TIMER_BROADCAST, 5);		// Set to refresh network in y seconds
 
     while (!shutdown) {					// While NOT shutdown
 	printf("====================\n");
@@ -67,11 +67,16 @@ int main(int argc, char **argv) {
 	    handle_network_msg(protocol_socket, &timers);  // handle the network message
 	}
 	switch (check_timers(&timers)) {		// check which timer has expired
-	case TIMER_REFRESH:
-	    if (check_live_nodes(protocol_socket)) {	// On refresh check the network
-		 add_timer(&timers, TIMER_REPLY, 2);	// Expire replies if not received within x secoonds
+	case TIMER_BROADCAST:				// On Broadcast timer
+	    broadcast_network(protocol_socket);		// send out broadcast message to contact other nodes
+	    add_timer(&timers, TIMER_BROADCAST, 20);	// and set to broadcast again in y seconds
+	    break;
+
+	case TIMER_PING:
+	    if (check_live_nodes(protocol_socket)) {	// On Ping check the network
+		add_timer(&timers, TIMER_REPLY, 2);	// Expire replies if not received within x secoonds
+		add_timer(&timers, TIMER_PING, 20);	// and set to Ping again in y seconds
 	    }
-	    add_timer(&timers, TIMER_REFRESH, 20);	// and set to refresh again in y seconds
 	    break;
 
 	case TIMER_REPLY:
