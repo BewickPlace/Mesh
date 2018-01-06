@@ -42,14 +42,15 @@ THE SOFTWARE.
 #include "timers.h"
 #include "networks.h"
 
-int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay);	// Local procedures
+int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len);	// Local procedures
 int	find_live_node(struct in6_addr *src);
 int	add_live_node(struct in6_addr *src);
 void	update_my_ip_details();
 void	cancel_reply_timer(struct timer_list *timers);
 void	handle_delay_calc(int node, struct timeval t1, struct timeval t2, struct timeval t3, struct timeval t4, time_t remote_delay);
 
-#define HOSTNAME_LEN	14					//Max supported host name length including null
+#define HOSTNAME_LEN	14					// Max supported host name length including null
+#define	MAX_BUFFER 200						// Maximum  network buffer size
 
 struct net {							// Network descriptior
 	struct in6_addr address;				// IPv6 Address
@@ -80,6 +81,7 @@ const unsigned char ones[SIN_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0
 #define MSG_TYPE_PING	44
 #define MSG_TYPE_REPLY	45
 #define MSG_TYPE_ECHO	46
+#define MSG_TYPE_PAYLOAD 50
 #define MSG_VERSION	1
 
 struct test_msg {						// Test message format
@@ -102,14 +104,17 @@ struct test_msg {						// Test message format
 //
 //	Initialise network information
 //
-int	initialise_network() {
+int	initialise_network(int max_payload_len) {
     int ifindex, rc = -1;
     struct ipv6_mreq mreq;
     int sock = -1;
     int one = 1, zero = 0;
     const int ds = 0xc0;        			// CS6 - Network Control
+    struct test_msg message;
 
     struct sockaddr_in6 sin6;
+
+    ERRORCHECK( MAX_BUFFER < (sizeof(message) + max_payload_len), "Network buffer too small", small);
 
     FD_ZERO(&readfds);
 
@@ -165,6 +170,11 @@ int	initialise_network() {
 
     return(sock);
 
+
+ERRORBLOCK(small);
+    warn("Message length: %d",sizeof(message));
+    warn("Payload length: %d",max_payload_len);
+
 ERRORBLOCK(die);
     warn("Error %d errno(%d)", rc, errno);
     close(sock);
@@ -197,7 +207,7 @@ void	broadcast_network(int sock) {
     int i, rc;
 
     i = -1;
-    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO, 0); // send out a broadcast message to identify networks
+    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO, 0, NULL, 0); // send out a broadcast message to identify networks
     ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
 
 ERRORBLOCK(SendError);
@@ -230,7 +240,7 @@ int	check_live_nodes(int sock) {
 		    inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
 		    debug(DEBUG_TRACE, "Link DOWN to node: %s (%s)\n", other_nodes[i].name, ipv4_string);
             	}
-	        rc = send_network_msg(sock, &other_nodes[i].address, MSG_TYPE_PING, 0); // send out a specific message to this node
+	        rc = send_network_msg(sock, &other_nodes[i].address, MSG_TYPE_PING, 0, NULL, 0); // send out a specific message to this node
 	        ERRORCHECK( rc < 0, "Network send error\n", SendError);
 	        other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
                 other_nodes[i].from = MSG_STATE_UNKNOWN;		// and received status unknown
@@ -292,13 +302,12 @@ int	check_network_msg(int sock) {
 	return(FD_ISSET(sock, &readfds));
 }
 
-#define	MAX_BUFFER 100						//Maximum  network buffer size
 //
 //	Handle Network Message
 //
-void	handle_network_msg(int sock, struct timer_list *timers) {
-    char buf[MAX_BUFFER];					// Full buffer
-    struct test_msg *message = (struct test_msg*)&buf;		// Our Test Msg mapped over full buffer
+void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int *payload_len) {
+    char full_message[MAX_BUFFER];				// Full buffer
+    struct test_msg *message = (struct test_msg*)full_message;	// Our Test Msg mapped over full buffer
     struct iovec iovec;
     struct msghdr msg;
     struct sockaddr_in6 sin6;
@@ -306,7 +315,7 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
     char ipv4_string[40];
 
     memset(&msg, 0, sizeof(msg));				//Initialise message header
-    iovec.iov_base = buf;
+    iovec.iov_base = full_message;
     iovec.iov_len = MAX_BUFFER;
     msg.msg_name = &sin6;					// ??
     msg.msg_namelen = sizeof(sin6);				// ??
@@ -317,7 +326,15 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
     ERRORCHECK( rc < 0, "Read message failed\n", EndError);
 
     ERRORCHECK( rc < 2, "Truncated packet\n", EndError);
-    ERRORCHECK( (rc != sizeof(struct test_msg)), "Ill formed packet\n", EndError);
+    *payload_len = rc - sizeof(struct test_msg);
+
+//    ERRORCHECK( (rc != sizeof(struct test_msg)), "Ill formed packet\n", EndError);
+    if ((message->type == MSG_TYPE_PAYLOAD) &&			// if this is a payload packet
+	(*payload_len != 0)) {
+	memcpy(payload, &full_message[sizeof(struct test_msg)], *payload_len);	// copy it back to the users byffer
+	return;							// and return
+    }
+
     ERRORCHECK( (message->type != MSG_TYPE_ECHO) && \
 		(message->type != MSG_TYPE_PING) && \
 		(message->type != MSG_TYPE_REPLY), "Unrecognised message type\n", EndError);
@@ -350,7 +367,7 @@ void	handle_network_msg(int sock, struct timer_list *timers) {
 	debug(DEBUG_DETAIL, "Ping message received\n");
 	gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
 	other_nodes[node].from = MSG_STATE_RECEIVED;		// Ping request
-	rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay);	// Send reply - with our view of delay
+	rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay, NULL, 0);	// Send reply - with our view of delay
 	if (rc > 0) {
 	    other_nodes[node].from = MSG_STATE_OK;		// and note as such
 	}
@@ -367,35 +384,38 @@ ENDERROR;
 //
 //	Send a network message
 //
-int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay) {
+int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len) {
     int rc;
     struct iovec iovec[2];
     struct msghdr msg;
     struct sockaddr_in6 sin6;
-    struct test_msg message;
     char addr_string[40];
+    char full_message[MAX_BUFFER];				// Full buffer
+    struct test_msg *message = (struct test_msg*)full_message;	// Our Test Msg mapped over full buffer
 
     inet_ntop(AF_INET6, dest, (char *)&addr_string, 40);
     debug(DEBUG_DETAIL, "Send message - Socket %d Address %s Type %d\n", sock, addr_string, type);
 
-    memset(&message, 0, sizeof(message));
-    message.type = type;
-    message.version = MSG_VERSION;
-    message.hops = 0;
-    message.total_hops = 0;
-    memcpy(&message.dest, dest, SIN_LEN);
-    memcpy(message.src_name, my_hostname, HOSTNAME_LEN);	// Include Hostname and  allocated IPv4 Address
-    memcpy(&message.src_addripv4, &my_ipv4_addr, SIN4_LEN);
+    memset(message, 0, MAX_BUFFER);
+    message->type = type;
+    message->version = MSG_VERSION;
+    message->hops = 0;
+    message->total_hops = 0;
+    memcpy(&message->dest, dest, SIN_LEN);
+    memcpy(message->src_name, my_hostname, HOSTNAME_LEN);	// Include Hostname and  allocated IPv4 Address
+    memcpy(&message->src_addripv4, &my_ipv4_addr, SIN4_LEN);
 
     if (type == MSG_TYPE_PING) {
-	    gettimeofday(&(message.t1), NULL);			// T1 - Sent timestamp
+	    gettimeofday(&(message->t1), NULL);			// T1 - Sent timestamp
     } else if (type == MSG_TYPE_REPLY) {
-	    gettimeofday(&(message.t3), NULL);			// T3 - Sent timestamp
+	    gettimeofday(&(message->t3), NULL);			// T3 - Sent timestamp
     }
-    message.remotedelay = node_delay;				// include view of the delay
+    message->remotedelay = node_delay;				// include view of the delay
+    if (payload_len > 0)					// and add payload if appropriate
+	{ memcpy(&full_message[sizeof(struct test_msg)], payload, payload_len); }
 
-    iovec[0].iov_base = (void *)&message;
-    iovec[0].iov_len = sizeof(message);
+    iovec[0].iov_base = (void *)full_message;
+    iovec[0].iov_len = sizeof(struct test_msg)+payload_len;
     iovec[1].iov_base = NULL;
     iovec[1].iov_len = 0;
 
@@ -496,6 +516,22 @@ void	cancel_reply_timer(struct timer_list *timers) {
     cancel_timer(timers, TIMER_REPLY);				// None found we can cancel the timer
 
 ENDERROR;
+}
+
+//
+//	Send Payload to connected Node
+//
+int	send_to_node(int sock, int node, char *payload, int payload_len) {
+    int rc;
+
+    rc = -1;
+    ERRORCHECK(other_nodes[node].state != NET_STATE_UP, "Send Payload - link down\n", EndError);	// Check Link UP
+
+    rc = send_network_msg(sock, &other_nodes[node].address, MSG_TYPE_PAYLOAD, 0, payload, payload_len); // send out a specific message to this node
+    ERRORCHECK( rc < 0, "Network send error\n", EndError);
+
+ENDERROR;
+    return(rc);
 }
 
 //

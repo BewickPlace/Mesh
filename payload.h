@@ -20,32 +20,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-#define	NO_NETWORKS 10
+#define PAYLOAD_TYPE	10			// Add possible payload types here
+#define PAYLOAD_DATA_LEN 12
+struct payload_pkt {
+    int	 type;
+    char data[PAYLOAD_DATA_LEN];
 
-#define NET_STATE_UNKNOWN 0
-#define NET_STATE_DOWN 	1
-#define NET_STATE_UP 	2
+    };						// Expand definition of payload here
 
-#define MSG_STATE_UNKNOWN 0
-#define MSG_STATE_SENT 	1
-#define MSG_STATE_RECEIVED 2
-#define MSG_STATE_FAILED 3
-#define MSG_STATE_OK 	4
+void    notify_link_up();
 
-int	initialise_network(int max_payload_len);
+void    notify_link_down();
 
-void	wait_on_network_timers(int sock, struct timer_list *timers);
+void	handle_app_msg(int sock, struct payload_pkt *packet, int payload_len);
 
-void	broadcast_network(int sock);
-
-int	check_live_nodes(int sock);
-
-void	expire_live_nodes();
-
-void	display_live_network();
-
-int	check_network_msg(int sock);
-
-void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int *payload_len);
-
-int	send_to_node(int sock, int node, char *payload, int payload_len);
+void	handle_app_timer(int sock);

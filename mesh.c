@@ -44,6 +44,7 @@ THE SOFTWARE.
 #include "errorcheck.h"
 #include "timers.h"
 #include "networks.h"
+#include "payload.h"
 
 #define	OPMODE_MASTER	0				// Node operating modes
 #define	OPMODE_SLAVE	1				//
@@ -120,22 +121,30 @@ int main(int argc, char **argv) {
     int shutdown = 0;					// Shutdown flag
     int protocol_socket;				// Network protocol socket
     struct timer_list timers;				// Timers
-
+    int payload_len;					// length of payload returned
+    struct payload_pkt app_data;			// App payload data
     parse_options(argc, argv);				// Parse command line parameters
     debug(DEBUG_ESSENTIAL, "Mesh starting in mode: %d\n", operating_mode);
 
-    protocol_socket =  initialise_network();		// Initialise the network details
+    protocol_socket =  initialise_network(sizeof(struct payload_pkt));	// Initialise the network details
     initialise_timers(&timers);				// and set all timers
 
-    if (operating_mode == OPMODE_MASTER) {		// Only Master nodes are responsible for broadcasting
+    switch (operating_mode) {
+    case OPMODE_MASTER:					// Only Master nodes are responsible for broadcasting
 	add_timer(&timers, TIMER_BROADCAST, 5);		// Set to refresh network in y seconds
+	break;
+
+    case OPMODE_SLAVE:
+	add_timer(&timers, TIMER_APPLICATION, 15);		// Set to refresh network in y seconds
+	break;
     }
 
     while (!shutdown) {					// While NOT shutdown
 	wait_on_network_timers(protocol_socket, &timers); // Wait for message or timer expiory
 
 	if (check_network_msg(protocol_socket)) {	// If a message is available
-	    handle_network_msg(protocol_socket, &timers);  // handle the network message
+	    handle_network_msg(protocol_socket, &timers, (char *)&app_data, &payload_len);	// handle the network message
+	    handle_app_msg(protocol_socket, &app_data, payload_len);				// handle application specific messages
 	}
 	switch (check_timers(&timers)) {		// check which timer has expired
 	case TIMER_BROADCAST:				// On Broadcast timer
@@ -152,6 +161,10 @@ int main(int argc, char **argv) {
 
 	case TIMER_REPLY:
 	    expire_live_nodes();			//  Expire other nodes where reply has timed out
+	    break;
+
+	case TIMER_APPLICATION:
+	    handle_app_timer(protocol_socket);		// Handle the timer for the App
 	    break;
 
 	default:
