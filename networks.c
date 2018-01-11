@@ -42,7 +42,7 @@ THE SOFTWARE.
 #include "timers.h"
 #include "networks.h"
 
-int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len);	// Local procedures
+int	send_network_msg(struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len);	// Local procedures
 int	find_live_node(struct in6_addr *src);
 int	add_live_node(struct in6_addr *src);
 void	update_my_ip_details();
@@ -63,6 +63,8 @@ struct net {							// Network descriptior
 	time_t remote_delay;					// Round trip delay (ms) seen by other node
 	};
 
+static int netsock;						// network socket
+static void (*link_up_callback)(void), (*link_down_callback)(void);		// Link callback functions
 static char my_hostname[HOSTNAME_LEN];				// My hostname
 struct in_addr my_ipv4_addr;					// & IPv4 address
 static struct net other_nodes[NO_NETWORKS];			// Main network descriptor
@@ -104,7 +106,7 @@ struct test_msg {						// Test message format
 //
 //	Initialise network information
 //
-int	initialise_network(int max_payload_len) {
+int	initialise_network(int max_payload_len, void (*up_callback)(void), void (*down_callback)(void)) {
     int ifindex, rc = -1;
     struct ipv6_mreq mreq;
     int sock = -1;
@@ -113,6 +115,10 @@ int	initialise_network(int max_payload_len) {
     struct test_msg message;
 
     struct sockaddr_in6 sin6;
+
+    link_up_callback = NULL;			// Set Link status callbacks
+    link_up_callback = up_callback;			// Set Link status callbacks
+    link_down_callback = down_callback;
 
     ERRORCHECK( MAX_BUFFER < (sizeof(message) + max_payload_len), "Network buffer too small", small);
 
@@ -166,6 +172,7 @@ int	initialise_network(int max_payload_len) {
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_JOIN_GROUP, (char*)&mreq, sizeof(mreq));
     ERRORCHECK( rc<0, "set socket error\n", die);
 
+    netsock = sock;						// Save network socket
     update_my_ip_details();					// Update local host name & Ip address
 
     return(sock);
@@ -179,21 +186,22 @@ ERRORBLOCK(die);
     warn("Error %d errno(%d)", rc, errno);
     close(sock);
 ENDERROR;
+    netsock = -1;						// No network socket
     return(-1);
 }
 
 //
 //	Wait on message or timer, whatever comes first
 //
-void	wait_on_network_timers(int sock, struct timer_list *timers) {
+void	wait_on_network_timers(struct timer_list *timers) {
     int rc;
     struct timeval *wait;
     wait = next_timers(timers);
     debug(DEBUG_DETAIL, "Wait on read or timeout %llds\n", (long long)wait->tv_sec);
     if (wait->tv_sec > 0L) {					// As long as next timer not expired
 								// attempt read on socket
-	FD_SET(sock, &readfds);					// timeout on next timer
-	rc = select(sock + 1, &readfds, NULL, NULL, wait);
+	FD_SET(netsock, &readfds);					// timeout on next timer
+	rc = select(netsock + 1, &readfds, NULL, NULL, wait);
 	ERRORCHECK( (rc < 0) && (errno != EINTR), "Message wait on socket error\n", EndError);
     }
 
@@ -203,11 +211,11 @@ ENDERROR;
 //
 //	Broadcast to all nodes
 //
-void	broadcast_network(int sock) {
+void	broadcast_network() {
     int i, rc;
 
     i = -1;
-    rc = send_network_msg(sock, &multicast_address , MSG_TYPE_ECHO, 0, NULL, 0); // send out a broadcast message to identify networks
+    rc = send_network_msg(&multicast_address , MSG_TYPE_ECHO, 0, NULL, 0); // send out a broadcast message to identify networks
     ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
 
 ERRORBLOCK(SendError);
@@ -218,7 +226,7 @@ ENDERROR;
 //
 //	Check live networks by sending out messages
 //
-int	check_live_nodes(int sock) {
+int	check_live_nodes() {
     int i, rc, sent;
     char ipv4_string[40];
 
@@ -239,8 +247,9 @@ int	check_live_nodes(int sock) {
 		    other_nodes[i].state = NET_STATE_DOWN;	// Mark network as likely to be down
 		    inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
 		    debug(DEBUG_TRACE, "Link DOWN to node: %s (%s)\n", other_nodes[i].name, ipv4_string);
+		    if (link_down_callback != NULL) link_down_callback();	// run callback if defined
             	}
-	        rc = send_network_msg(sock, &other_nodes[i].address, MSG_TYPE_PING, 0, NULL, 0); // send out a specific message to this node
+	        rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, 0, NULL, 0); // send out a specific message to this node
 	        ERRORCHECK( rc < 0, "Network send error\n", SendError);
 	        other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
                 other_nodes[i].from = MSG_STATE_UNKNOWN;		// and received status unknown
@@ -297,15 +306,15 @@ void	display_live_network() {
 //
 //	Check if a Network Message is available
 //
-int	check_network_msg(int sock) {
+int	check_network_msg() {
 
-	return(FD_ISSET(sock, &readfds));
+	return(FD_ISSET(netsock, &readfds));
 }
 
 //
 //	Handle Network Message
 //
-void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int *payload_len) {
+void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_len) {
     char full_message[MAX_BUFFER];				// Full buffer
     struct test_msg *message = (struct test_msg*)full_message;	// Our Test Msg mapped over full buffer
     struct iovec iovec;
@@ -322,7 +331,7 @@ void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int 
     msg.msg_iov = &iovec;
     msg.msg_iovlen = 1;
 
-    rc = recvmsg(sock, &msg, 0);
+    rc = recvmsg(netsock, &msg, 0);
     ERRORCHECK( rc < 0, "Read message failed\n", EndError);
 
     ERRORCHECK( rc < 2, "Truncated packet\n", EndError);
@@ -360,6 +369,7 @@ void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int 
 	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
             inet_ntop(AF_INET, &message->src_addripv4, (char *)&ipv4_string, 40);
 	    debug(DEBUG_TRACE, "Link UP   to node: %s (%s)\n", message->src_name, ipv4_string);
+	    if (link_up_callback != NULL) link_up_callback();	// run callback if defined
 	}
 	cancel_reply_timer(timers);				// Cancel reply timer if all now received
 	break;
@@ -367,7 +377,7 @@ void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int 
 	debug(DEBUG_DETAIL, "Ping message received\n");
 	gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
 	other_nodes[node].from = MSG_STATE_RECEIVED;		// Ping request
-	rc = send_network_msg( sock, &sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay, NULL, 0);	// Send reply - with our view of delay
+	rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay, NULL, 0);	// Send reply - with our view of delay
 	if (rc > 0) {
 	    other_nodes[node].from = MSG_STATE_OK;		// and note as such
 	}
@@ -384,7 +394,7 @@ ENDERROR;
 //
 //	Send a network message
 //
-int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len) {
+int	send_network_msg(struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len) {
     int rc;
     struct iovec iovec[2];
     struct msghdr msg;
@@ -394,7 +404,7 @@ int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_dela
     struct test_msg *message = (struct test_msg*)full_message;	// Our Test Msg mapped over full buffer
 
     inet_ntop(AF_INET6, dest, (char *)&addr_string, 40);
-    debug(DEBUG_DETAIL, "Send message - Socket %d Address %s Type %d\n", sock, addr_string, type);
+    debug(DEBUG_DETAIL, "Send message - Address %s Type %d\n", addr_string, type);
 
     memset(message, 0, MAX_BUFFER);
     message->type = type;
@@ -430,7 +440,7 @@ int	send_network_msg(int sock, struct in6_addr *dest, int type, time_t node_dela
     msg.msg_name = &sin6;
     msg.msg_namelen = sizeof(sin6);
 
-    rc = sendmsg( sock, &msg, 0);
+    rc = sendmsg( netsock, &msg, 0);
     return(rc);
 }
 
@@ -521,13 +531,13 @@ ENDERROR;
 //
 //	Send Payload to connected Node
 //
-int	send_to_node(int sock, int node, char *payload, int payload_len) {
+int	send_to_node(int node, char *payload, int payload_len) {
     int rc;
 
     rc = -1;
     ERRORCHECK(other_nodes[node].state != NET_STATE_UP, "Send Payload - link down\n", EndError);	// Check Link UP
 
-    rc = send_network_msg(sock, &other_nodes[node].address, MSG_TYPE_PAYLOAD, 0, payload, payload_len); // send out a specific message to this node
+    rc = send_network_msg(&other_nodes[node].address, MSG_TYPE_PAYLOAD, 0, payload, payload_len); // send out a specific message to this node
     ERRORCHECK( rc < 0, "Network send error\n", EndError);
 
 ENDERROR;

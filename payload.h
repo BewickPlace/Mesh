@@ -32,6 +32,6 @@ void    notify_link_up();
 
 void    notify_link_down();
 
-void	handle_app_msg(int sock, struct payload_pkt *packet, int payload_len);
+void	handle_app_msg(struct payload_pkt *packet, int payload_len);
 
-void	handle_app_timer(int sock);
+void	handle_app_timer();

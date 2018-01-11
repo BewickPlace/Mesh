@@ -32,20 +32,20 @@ THE SOFTWARE.
 #define MSG_STATE_FAILED 3
 #define MSG_STATE_OK 	4
 
-int	initialise_network(int max_payload_len);
+int	initialise_network(int max_payload_len, void (*up_callback)(void), void (*down_callback)(void));
 
-void	wait_on_network_timers(int sock, struct timer_list *timers);
+void	wait_on_network_timers(struct timer_list *timers);
 
-void	broadcast_network(int sock);
+void	broadcast_network();
 
-int	check_live_nodes(int sock);
+int	check_live_nodes();
 
 void	expire_live_nodes();
 
 void	display_live_network();
 
-int	check_network_msg(int sock);
+int	check_network_msg();
 
-void	handle_network_msg(int sock, struct timer_list *timers, char *payload, int *payload_len);
+void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_len);
 
-int	send_to_node(int sock, int node, char *payload, int payload_len);
+int	send_to_node(int node, char *payload, int payload_len);

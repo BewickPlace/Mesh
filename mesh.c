@@ -119,14 +119,13 @@ int parse_options(int argc, char **argv) {
 //
 int main(int argc, char **argv) {
     int shutdown = 0;					// Shutdown flag
-    int protocol_socket;				// Network protocol socket
     struct timer_list timers;				// Timers
     int payload_len;					// length of payload returned
     struct payload_pkt app_data;			// App payload data
     parse_options(argc, argv);				// Parse command line parameters
     debug(DEBUG_ESSENTIAL, "Mesh starting in mode: %d\n", operating_mode);
 
-    protocol_socket =  initialise_network(sizeof(struct payload_pkt));	// Initialise the network details
+    initialise_network(sizeof(struct payload_pkt),notify_link_up, notify_link_down);	// Initialise the network details with callbacks
     initialise_timers(&timers);				// and set all timers
 
     switch (operating_mode) {
@@ -140,20 +139,20 @@ int main(int argc, char **argv) {
     }
 
     while (!shutdown) {					// While NOT shutdown
-	wait_on_network_timers(protocol_socket, &timers); // Wait for message or timer expiory
+	wait_on_network_timers(&timers); 		// Wait for message or timer expiory
 
-	if (check_network_msg(protocol_socket)) {	// If a message is available
-	    handle_network_msg(protocol_socket, &timers, (char *)&app_data, &payload_len);	// handle the network message
-	    handle_app_msg(protocol_socket, &app_data, payload_len);				// handle application specific messages
+	if (check_network_msg()) {			// If a message is available
+	    handle_network_msg(&timers, (char *)&app_data, &payload_len);	// handle the network message
+	    handle_app_msg(&app_data, payload_len);				// handle application specific messages
 	}
 	switch (check_timers(&timers)) {		// check which timer has expired
 	case TIMER_BROADCAST:				// On Broadcast timer
-	    broadcast_network(protocol_socket);		// send out broadcast message to contact other nodes
+	    broadcast_network();			// send out broadcast message to contact other nodes
 	    add_timer(&timers, TIMER_BROADCAST, 20);	// and set to broadcast again in y seconds
 	    break;
 
 	case TIMER_PING:
-	    if (check_live_nodes(protocol_socket)) {	// On Ping check the network
+	    if (check_live_nodes()) {			// On Ping check the network
 		add_timer(&timers, TIMER_REPLY, 2);	// Expire replies if not received within x secoonds
 		add_timer(&timers, TIMER_PING, 20);	// and set to Ping again in y seconds
 	    }
@@ -164,7 +163,7 @@ int main(int argc, char **argv) {
 	    break;
 
 	case TIMER_APPLICATION:
-	    handle_app_timer(protocol_socket);		// Handle the timer for the App
+	    handle_app_timer();				// Handle the timer for the App
 	    break;
 
 	default:

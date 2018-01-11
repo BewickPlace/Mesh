@@ -54,19 +54,19 @@ void	notify_link_down() {
     printf("DOWN\n");
     }
 
-void	handle_app_msg(int sock, struct payload_pkt *payload, int payload_len) {
+void	handle_app_msg(struct payload_pkt *payload, int payload_len) {
 
     if( payload_len == 0) { return; }		// skip out if nothing to do
 
     debug(DEBUG_ESSENTIAL, "Payload Received of type %d %s, len %d\n", payload->type, payload->data, payload_len);
 }
 
-void	handle_app_timer(int sock) {
+void	handle_app_timer() {
     struct payload_pkt app_data = {PAYLOAD_TYPE,"ABCDEFGHIJK\0" };
     int node = 0;
 
     debug(DEBUG_ESSENTIAL, "Handle App timeout\n");
 
-    send_to_node(sock, node, (char *) &app_data, sizeof(app_data));
+    send_to_node(node, (char *) &app_data, sizeof(app_data));
 
     }
