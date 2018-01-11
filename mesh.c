@@ -44,7 +44,7 @@ THE SOFTWARE.
 #include "errorcheck.h"
 #include "timers.h"
 #include "networks.h"
-#include "payload.h"
+#include "application.h"
 
 #define	OPMODE_MASTER	0				// Node operating modes
 #define	OPMODE_SLAVE	1				//

@@ -44,7 +44,7 @@ THE SOFTWARE.
 #include "errorcheck.h"
 #include "timers.h"
 #include "networks.h"
-#include "payload.h"
+#include "application.h"
 
 void	notify_link_up() {
     printf("UP\n");
@@ -61,7 +61,7 @@ void	handle_app_msg(struct payload_pkt *payload, int payload_len) {
     debug(DEBUG_ESSENTIAL, "Payload Received of type %d %s, len %d\n", payload->type, payload->data, payload_len);
 }
 
-void	handle_app_timer() {
+void	handle_app_timer(int sock) {
     struct payload_pkt app_data = {PAYLOAD_TYPE,"ABCDEFGHIJK\0" };
     int node = 0;
 

@@ -6,9 +6,9 @@ DEFINES = $(PLATFORM_DEFINES)
 
 CFLAGS = $(CDEBUGFLAGS) $(DEFINES) $(EXTRA_DEFINES)
 
-SRCS = mesh.c timers.c networks.c errorcheck.c payload.c
+SRCS = mesh.c timers.c networks.c errorcheck.c application.c
 
-OBJS = mesh.o timers.o networks.o errorcheck.o payload.o
+OBJS = mesh.o timers.o networks.o errorcheck.o application.o
 
 LDLIBS = -lrt
 
