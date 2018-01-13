@@ -332,9 +332,9 @@ void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_l
     msg.msg_iovlen = 1;
 
     rc = recvmsg(netsock, &msg, 0);
-    ERRORCHECK( rc < 0, "Read message failed\n", EndError);
+    ERRORCHECK( rc < 0, "Read message failed", ReadError);
 
-    ERRORCHECK( rc < 2, "Truncated packet\n", EndError);
+    ERRORCHECK( rc < 2, "Truncated packet", EndError);
     *payload_len = rc - sizeof(struct test_msg);
 
 //    ERRORCHECK( (rc != sizeof(struct test_msg)), "Ill formed packet\n", EndError);
@@ -387,6 +387,9 @@ void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_l
     }
     memcpy(other_nodes[node].name, message->src_name, HOSTNAME_LEN);	// Maintain Hostname and  allocated IPv4 Address
     memcpy(&other_nodes[node].addripv4, &message->src_addripv4, SIN4_LEN);
+
+ERRORBLOCK(ReadError);
+    warn("Read error: %d errno(%d)", rc, errno);
 ENDERROR;
 }
 
