@@ -330,6 +330,7 @@ void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_l
     msg.msg_namelen = sizeof(sin6);				// ??
     msg.msg_iov = &iovec;
     msg.msg_iovlen = 1;
+    *payload_len = 0;						// No payload yet
 
     rc = recvmsg(netsock, &msg, 0);
     ERRORCHECK( rc < 0, "Read message failed", ReadError);
