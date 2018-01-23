@@ -275,6 +275,8 @@ void	expire_live_nodes() {
 	if ((memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) && // if an address is defined
 	    (other_nodes[i].to == MSG_STATE_SENT)) {		// and awaiting outstanding reply
 	    other_nodes[i].to = MSG_STATE_FAILED;		// mark this node as failed
+	    send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, 0, NULL, 0); // Re-Ping failed node
+	    debug(DEBUG_TRACE, "Link to %s failed, retry ping\n", other_nodes[i].name);
 	}
     }
 }
@@ -333,6 +335,7 @@ void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_l
     *payload_len = 0;						// No payload yet
 
     rc = recvmsg(netsock, &msg, 0);
+    if (rc == EAGAIN) { goto EndError; }			// If EAGAIN skip to end without warning message
     ERRORCHECK( rc < 0, "Read message failed", ReadError);
 
     ERRORCHECK( rc < 2, "Truncated packet", EndError);
