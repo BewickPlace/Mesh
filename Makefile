@@ -10,7 +10,7 @@ SRCS = mesh.c timers.c networks.c errorcheck.c application.c
 
 OBJS = mesh.o timers.o networks.o errorcheck.o application.o
 
-LDLIBS = -lrt
+LDLIBS = -lrt -lwiringPi
 
 mesh: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o mesh $(OBJS) $(LDLIBS)

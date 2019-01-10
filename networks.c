@@ -38,18 +38,17 @@ THE SOFTWARE.
 #include <arpa/inet.h>
 #include <net/if.h>
 
+#include <wiringPi.h>
 #include "errorcheck.h"
 #include "timers.h"
 #include "networks.h"
 
-int	send_network_msg(struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len);	// Local procedures
+int	send_network_msg(struct in6_addr *dest, int type, char *payload, int payload_len, unsigned char payload_seq);	// Local procedures
 int	find_live_node(struct in6_addr *src);
 int	add_live_node(struct in6_addr *src);
 void	update_my_ip_details();
-void	cancel_reply_timer(struct timer_list *timers);
-void	handle_delay_calc(int node, struct timeval t1, struct timeval t2, struct timeval t3, struct timeval t4, time_t remote_delay);
+void	cancel_reply_timer();
 
-#define HOSTNAME_LEN	14					// Max supported host name length including null
 #define	MAX_BUFFER 200						// Maximum  network buffer size
 
 struct net {							// Network descriptior
@@ -59,12 +58,12 @@ struct net {							// Network descriptior
 	int from;						// State of messages from node
 	char name[HOSTNAME_LEN];				// Node hostname
 	struct in_addr addripv4;				// IPv4 address
-	time_t delay;						// Round trip delay (ms)
-	time_t remote_delay;					// Round trip delay (ms) seen by other node
+	unsigned char to_seq;					// Payload sequence number ~ to
+	unsigned char from_seq;					// Payload sequence number ~ from
 	};
 
 static int netsock;						// network socket
-static void (*link_up_callback)(void), (*link_down_callback)(void);		// Link callback functions
+static void (*link_up_callback)(char *name), (*link_down_callback)(char *name);		// Link callback functions
 static char my_hostname[HOSTNAME_LEN];				// My hostname
 struct in_addr my_ipv4_addr;					// & IPv4 address
 static struct net other_nodes[NO_NETWORKS];			// Main network descriptor
@@ -83,30 +82,23 @@ const unsigned char ones[SIN_LEN] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0
 #define MSG_TYPE_PING	44
 #define MSG_TYPE_REPLY	45
 #define MSG_TYPE_ECHO	46
+#define MSG_TYPE_ECHO_REPLY 47
 #define MSG_TYPE_PAYLOAD 50
-#define MSG_VERSION	1
+#define MSG_VERSION	2
 
 struct test_msg {						// Test message format
 	char type;
 	char version;
-	char hops;
-	char total_hops;
 	struct in6_addr dest;
 	char src_name[HOSTNAME_LEN];
 	struct in_addr src_addripv4;
-	struct timeval t1, t2, t3, t4;				// NTP delay calculation timestamps
-	time_t  remotedelay;					// other nodes view of current delay
+	unsigned char payload_seq;
 	};
-
-//int nodns = 0, af = 3, request_prefix_delegation = 0;
-
-
-
 
 //
 //	Initialise network information
 //
-int	initialise_network(int max_payload_len, void (*up_callback)(void), void (*down_callback)(void)) {
+int	initialise_network(int max_payload_len, void (*up_callback)(char *name), void (*down_callback)(char *name)) {
     int ifindex, rc = -1;
     struct ipv6_mreq mreq;
     int sock = -1;
@@ -125,52 +117,52 @@ int	initialise_network(int max_payload_len, void (*up_callback)(void), void (*do
     FD_ZERO(&readfds);
 
     ifindex = if_nametoindex("wlan0");			// Use the wireless network interface
-    ERRORCHECK( ifindex <=0, "uknown interface type\n", die);
+    ERRORCHECK( ifindex <=0, "uknown interface type", die);
 
     rc = inet_pton(AF_INET6, MULTICAST, &multicast_address);
-    ERRORCHECK( rc < 0, "Protocol Group error\n", die);
+    ERRORCHECK( rc < 0, "Protocol Group error", die);
 
     sock = socket(PF_INET6, SOCK_DGRAM, 0);
-    ERRORCHECK( sock < 0, "socket error 1\n", EndError);
+    ERRORCHECK( sock < 0, "socket error 1", EndError);
 
     rc = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    ERRORCHECK( rc < 0, "socket error 2\n", die);
+    ERRORCHECK( rc < 0, "socket error 2", die);
 
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_LOOP, &zero, sizeof(zero));
-    ERRORCHECK( rc < 0, "socket error 3\n", die);
+    ERRORCHECK( rc < 0, "socket error 3", die);
 
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_MULTICAST_HOPS, &one, sizeof(one));
-    ERRORCHECK( rc < 0, "socket error 3\n", die);
+    ERRORCHECK( rc < 0, "socket error 3", die);
 
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero));
-    ERRORCHECK( rc < 0, "socket error 4\n", die);
+    ERRORCHECK( rc < 0, "socket error 4", die);
 
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_TCLASS, &ds, sizeof(ds));
-    ERRORCHECK( rc < 0, "socket error 5\n", die);
+    ERRORCHECK( rc < 0, "socket error 5", die);
 
     rc = fcntl(sock, F_GETFD, 0);
-    ERRORCHECK( rc < 0, "fcntl error 1\n", die);
+    ERRORCHECK( rc < 0, "fcntl error 1", die);
 
     rc = fcntl(sock, F_SETFD, rc | FD_CLOEXEC);
-    ERRORCHECK( rc < 0, "fcntl error 2\n", die);
+    ERRORCHECK( rc < 0, "fcntl error 2", die);
 
     rc = fcntl(sock, F_GETFL, 0);
-    ERRORCHECK( rc < 0, "fcntl error 3\n", die);
+    ERRORCHECK( rc < 0, "fcntl error 3", die);
 
     rc = fcntl(sock, F_SETFL, (rc | O_NONBLOCK));
-    ERRORCHECK( rc < 0, "fcntl error 1\n", die);
+    ERRORCHECK( rc < 0, "fcntl error 1", die);
 
     memset(&sin6, 0, sizeof(sin6));
     sin6.sin6_family = AF_INET6;
     sin6.sin6_port = htons(protocol_port);
     rc = bind(sock, (struct sockaddr*)&sin6, sizeof(sin6));
-    ERRORCHECK( rc < 0, "Bind error \n", die);
+    ERRORCHECK( rc < 0, "Bind error ", die);
 
     memset(&mreq, 0, sizeof(mreq));
     memcpy(&mreq.ipv6mr_multiaddr, &multicast_address, SIN_LEN);
     mreq.ipv6mr_interface = ifindex;
     rc = setsockopt(sock, IPPROTO_IPV6, IPV6_JOIN_GROUP, (char*)&mreq, sizeof(mreq));
-    ERRORCHECK( rc<0, "set socket error\n", die);
+    ERRORCHECK( rc<0, "set socket error", die);
 
     netsock = sock;						// Save network socket
     update_my_ip_details();					// Update local host name & Ip address
@@ -191,23 +183,33 @@ ENDERROR;
 }
 
 //
+//	network Closedown & tidy up
+//
+void	network_CLOSE() {
+
+    close(netsock);
+}
+
+//
 //	Wait on message or timer, whatever comes first
 //
-void	wait_on_network_timers(struct timer_list *timers) {
+void	wait_on_network_timers() {
     int rc;
     struct timeval *wait;
-    wait = next_timers(timers);
-    debug(DEBUG_DETAIL, "Wait on read or timeout %llds\n", (long long)wait->tv_sec);
+    wait = next_timers();
+    debug(DEBUG_DETAIL, "Wait on read or timeout %lds\n", wait->tv_sec);
     if (wait->tv_sec > 0L) {					// As long as next timer not expired
 								// attempt read on socket
 	FD_SET(netsock, &readfds);					// timeout on next timer
 	rc = select(netsock + 1, &readfds, NULL, NULL, wait);
-	ERRORCHECK( (rc < 0) && (errno != EINTR), "Message wait on socket error\n", EndError);
+	ERRORCHECK( (rc < 0) && (errno != EINTR), "Message wait on socket error", EndError);
+	adjust_timers();
     }
 
 ENDERROR;
 }
 
+static int network_warn = 0;
 //
 //	Broadcast to all nodes
 //
@@ -215,11 +217,15 @@ void	broadcast_network() {
     int i, rc;
 
     i = -1;
-    rc = send_network_msg(&multicast_address , MSG_TYPE_ECHO, 0, NULL, 0); // send out a broadcast message to identify networks
-    ERRORCHECK( rc < 0,  "Broadcast send error\n", SendError);
+    rc = send_network_msg(&multicast_address , MSG_TYPE_ECHO, NULL, 0, 0); // send out a broadcast message to identify networks
+    if (rc < 0) { goto SendError; }
+    network_warn = 0;
 
 ERRORBLOCK(SendError);
-    warn("Send error: Node %d, send error %d errno(%d)", i, rc, errno);
+    if (network_warn == 0) {
+	warn("Broadcast send error: Node %d, send error %d errno(%d)", i, rc, errno);
+	network_warn = 1;
+    }
 ENDERROR;
 }
 
@@ -246,20 +252,17 @@ int	check_live_nodes() {
 		    (other_nodes[i].from == MSG_STATE_UNKNOWN)) {
 		    other_nodes[i].state = NET_STATE_DOWN;	// Mark network as likely to be down
 		    inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-		    debug(DEBUG_TRACE, "Link DOWN to node: %s (%s)\n", other_nodes[i].name, ipv4_string);
-		    if (link_down_callback != NULL) link_down_callback();	// run callback if defined
+		    debug(DEBUG_ESSENTIAL, "Link DOWN to node: %s (%s)\n", other_nodes[i].name, ipv4_string);
+		    if (link_down_callback != NULL) link_down_callback(other_nodes[i].name);	// run callback if defined
             	}
-	        rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, 0, NULL, 0); // send out a specific message to this node
-	        ERRORCHECK( rc < 0, "Network send error\n", SendError);
+	        rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0); // send out a specific message to this node
+		if (rc < 0) { warn("Ping send error: Node %d, send error %d errno(%d)", i, rc, errno); }
 	        other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
                 other_nodes[i].from = MSG_STATE_UNKNOWN;		// and received status unknown
 		sent = 1;
 	    }
 	}
     }
-ERRORBLOCK(SendError);
-    warn("Send error: Node %d, send error %d errno(%d)", i, rc, errno);
-ENDERROR;
     return(sent);
 }
 
@@ -273,10 +276,13 @@ void	expire_live_nodes() {
 
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if ((memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) && // if an address is defined
-	    (other_nodes[i].to == MSG_STATE_SENT)) {		// and awaiting outstanding reply
+	    (other_nodes[i].state != NET_STATE_DOWN) &&
+	    ((other_nodes[i].to == MSG_STATE_SENT) | (other_nodes[i].to == MSG_STATE_FAILED))) {
+
 	    other_nodes[i].to = MSG_STATE_FAILED;		// mark this node as failed
-	    send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, 0, NULL, 0); // Re-Ping failed node
-	    debug(DEBUG_TRACE, "Link to %s failed, retry ping\n", other_nodes[i].name);
+	    send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0); // Re-Ping failed node
+	    add_timer(TIMER_REPLY, 3);
+	    debug(DEBUG_TRACE, "Link to %s timed out, retry ping\n", other_nodes[i].name);
 	}
     }
 }
@@ -298,9 +304,9 @@ void	display_live_network() {
 	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
             inet_ntop(AF_INET6, &other_nodes[i].address, (char *)&addr_string, 40);
             inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-	    debug(DEBUG_DETAIL, "Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d  delays %lld(l) %lld(r)\n",
+	    debug(DEBUG_DETAIL, "Node %d Address %s of %-12s (%s) state:to:from %2d %2d %2d Payload:%3d:%3d\n",
 			i, addr_string, other_nodes[i].name, ipv4_string, other_nodes[i].state, other_nodes[i].to, other_nodes[i].from,
-		    	(long long)other_nodes[i].delay, (long long)other_nodes[i].remote_delay);
+			other_nodes[i].to_seq, other_nodes[i].from_seq);
 	}
     }
 }
@@ -310,13 +316,13 @@ void	display_live_network() {
 //
 int	check_network_msg() {
 
-	return(FD_ISSET(netsock, &readfds));
+ 	return(FD_ISSET(netsock, &readfds));
 }
 
 //
 //	Handle Network Message
 //
-void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_len) {
+void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
     char full_message[MAX_BUFFER];				// Full buffer
     struct test_msg *message = (struct test_msg*)full_message;	// Our Test Msg mapped over full buffer
     struct iovec iovec;
@@ -335,53 +341,71 @@ void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_l
     *payload_len = 0;						// No payload yet
 
     rc = recvmsg(netsock, &msg, 0);
-    if (rc == EAGAIN) { goto EndError; }			// If EAGAIN skip to end without warning message
+    if (rc < EAGAIN) { goto EndError; }				//  If EAGAIN, skip to end without Warning message
     ERRORCHECK( rc < 0, "Read message failed", ReadError);
 
     ERRORCHECK( rc < 2, "Truncated packet", EndError);
     *payload_len = rc - sizeof(struct test_msg);
 
+    ERRORCHECK( (message->version != MSG_VERSION), "Incompatible message version", EndError);
 //    ERRORCHECK( (rc != sizeof(struct test_msg)), "Ill formed packet\n", EndError);
     if ((message->type == MSG_TYPE_PAYLOAD) &&			// if this is a payload packet
 	(*payload_len != 0)) {
+
 	memcpy(payload, &full_message[sizeof(struct test_msg)], *payload_len);	// copy it back to the users byffer
+	memcpy(node_name, message->src_name, HOSTNAME_LEN);	// Return Hostname
+
+	node = get_active_node(node_name);			// find which node this is
+	ERRORCHECK(node < 0, "Unidentified payload source", EndError);
+
+	other_nodes[node].from_seq++;
+	if (other_nodes[node].from_seq != message->payload_seq) {
+	    debug(DEBUG_TRACE, "Payload from %s received out of sequence [%d:%d]\n", node_name, message->payload_seq, other_nodes[node].from_seq);
+	    other_nodes[node].from_seq = message->payload_seq;
+	}
+	debug(DEBUG_DETAIL,"Payload from %s of type %d seq [%3d]\n", node_name, *(int *)payload, other_nodes[node].from_seq);
 	return;							// and return
     }
 
-    ERRORCHECK( (message->type != MSG_TYPE_ECHO) && \
-		(message->type != MSG_TYPE_PING) && \
-		(message->type != MSG_TYPE_REPLY), "Unrecognised message type\n", EndError);
-    ERRORCHECK( (message->version != MSG_VERSION), "Incompatible message version\n", EndError);
-
     node = find_live_node(&sin6.sin6_addr);			// Check if this node is known
-    if (node < 0) {						// if unknown
-	node = add_live_node(&sin6.sin6_addr);			// Add the source as a valid node
-	add_timer(timers, TIMER_PING, 1);			// initiate PINGs
-    }
-    ERRORCHECK( node < 0, "Network node unknown\n", EndError);
 
     switch (message->type) {					// Handle different message types
     case MSG_TYPE_ECHO:
-	debug(DEBUG_DETAIL, "Broadcast message received\n");	// Nothing else to do as have added live  node
+    case MSG_TYPE_ECHO_REPLY:
+	debug(DEBUG_DETAIL, "Broadcast message received\n");	// Manage creation of live node
+
+	if (node < 0) {						// if unknown source
+	    node = add_live_node(&sin6.sin6_addr);		// Add the source as a valid node
+
+	    if (message->type == MSG_TYPE_ECHO) {		// and first Broadcast received
+		rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_ECHO_REPLY, NULL, 0, 0); // Send specific broadcast response
+	    }
+	    add_timer(TIMER_PING, 1);				// initiate PINGs
+	} else if (other_nodes[node].state == NET_STATE_DOWN) {
+	    other_nodes[node].state = NET_STATE_UNKNOWN;	// Set link and message states as though new
+	    other_nodes[node].to = MSG_STATE_UNKNOWN;
+	    other_nodes[node].from = MSG_STATE_UNKNOWN;
+	    other_nodes[node].to_seq = 0;			// Reset Payload to/from sequence numbers
+	    other_nodes[node].from_seq = 0;
+	}
 	break;
     case MSG_TYPE_REPLY:
+	ERRORCHECK( node < 0, "Network node unknown (REPLY)", EndError);
 	debug(DEBUG_DETAIL, "Reply message received\n");
-	gettimeofday(&(message->t4), NULL);			// T4 - Received timestamp
-	handle_delay_calc( node, message->t1, message->t2, message->t3, message->t4, message->remotedelay);
 	other_nodes[node].to = MSG_STATE_OK;			// Reply received - to stae is OK
 	if (other_nodes[node].state != NET_STATE_UP) {		// Link state changes
 	    other_nodes[node].state = NET_STATE_UP;		// Set link status UP
             inet_ntop(AF_INET, &message->src_addripv4, (char *)&ipv4_string, 40);
-	    debug(DEBUG_TRACE, "Link UP   to node: %s (%s)\n", message->src_name, ipv4_string);
-	    if (link_up_callback != NULL) link_up_callback();	// run callback if defined
+	    debug(DEBUG_ESSENTIAL, "Link UP   to node: %s (%s)\n", message->src_name, ipv4_string);
+	    if (link_up_callback != NULL) link_up_callback(message->src_name);	// run callback if defined
 	}
-	cancel_reply_timer(timers);				// Cancel reply timer if all now received
+	cancel_reply_timer();					// Cancel reply timer if all now received
 	break;
     case MSG_TYPE_PING:
+	ERRORCHECK( node < 0, "Network node unknown (PING)", EndError);
 	debug(DEBUG_DETAIL, "Ping message received\n");
-	gettimeofday(&(message->t2), NULL);			// T2 - Received timestamp
 	other_nodes[node].from = MSG_STATE_RECEIVED;		// Ping request
-	rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_REPLY, other_nodes[node].delay, NULL, 0);	// Send reply - with our view of delay
+	rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_REPLY, NULL, 0, 0);	// Send reply
 	if (rc > 0) {
 	    other_nodes[node].from = MSG_STATE_OK;		// and note as such
 	}
@@ -391,9 +415,9 @@ void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_l
     }
     memcpy(other_nodes[node].name, message->src_name, HOSTNAME_LEN);	// Maintain Hostname and  allocated IPv4 Address
     memcpy(&other_nodes[node].addripv4, &message->src_addripv4, SIN4_LEN);
-
 ERRORBLOCK(ReadError);
-    warn("Read error: %d errno(%d)", rc, errno);
+    warn("Read error: error %d errno(%d)", rc, errno);
+    *payload_len = 0;						// Ensure No payload
 ENDERROR;
 }
 
@@ -401,8 +425,9 @@ ENDERROR;
 //
 //	Send a network message
 //
-int	send_network_msg(struct in6_addr *dest, int type, time_t node_delay, char *payload, int payload_len) {
+int	send_network_msg(struct in6_addr *dest, int type, char *payload, int payload_len, unsigned char payload_seq) {
     int rc;
+    int retry;
     struct iovec iovec[2];
     struct msghdr msg;
     struct sockaddr_in6 sin6;
@@ -410,26 +435,20 @@ int	send_network_msg(struct in6_addr *dest, int type, time_t node_delay, char *p
     char full_message[MAX_BUFFER];				// Full buffer
     struct test_msg *message = (struct test_msg*)full_message;	// Our Test Msg mapped over full buffer
 
-    inet_ntop(AF_INET6, dest, (char *)&addr_string, 40);
+    if ((inet_ntop(AF_INET6, dest, (char *)&addr_string, 40)) == NULL) {return(-1);}
     debug(DEBUG_DETAIL, "Send message - Address %s Type %d\n", addr_string, type);
 
     memset(message, 0, MAX_BUFFER);
     message->type = type;
     message->version = MSG_VERSION;
-    message->hops = 0;
-    message->total_hops = 0;
     memcpy(&message->dest, dest, SIN_LEN);
     memcpy(message->src_name, my_hostname, HOSTNAME_LEN);	// Include Hostname and  allocated IPv4 Address
     memcpy(&message->src_addripv4, &my_ipv4_addr, SIN4_LEN);
 
-    if (type == MSG_TYPE_PING) {
-	    gettimeofday(&(message->t1), NULL);			// T1 - Sent timestamp
-    } else if (type == MSG_TYPE_REPLY) {
-	    gettimeofday(&(message->t3), NULL);			// T3 - Sent timestamp
+    if (payload_len > 0) {					// and add payload if appropriate
+	message->payload_seq = payload_seq;			// including sequence number
+	memcpy(&full_message[sizeof(struct test_msg)], payload, payload_len);
     }
-    message->remotedelay = node_delay;				// include view of the delay
-    if (payload_len > 0)					// and add payload if appropriate
-	{ memcpy(&full_message[sizeof(struct test_msg)], payload, payload_len); }
 
     iovec[0].iov_base = (void *)full_message;
     iovec[0].iov_len = sizeof(struct test_msg)+payload_len;
@@ -447,7 +466,18 @@ int	send_network_msg(struct in6_addr *dest, int type, time_t node_delay, char *p
     msg.msg_name = &sin6;
     msg.msg_namelen = sizeof(sin6);
 
-    rc = sendmsg( netsock, &msg, 0);
+    for( retry = 0; retry < 40 ; retry++) {			// Loop for a Maxmimum of n retries
+	rc = sendmsg( netsock, &msg, 0);
+
+	if((rc < 0) &&						// If network error
+	   ((errno == ENETUNREACH) ||				// Network Unreachable
+	    (errno == EADDRNOTAVAIL))) {			// Address Mot Available
+	    delay(100);						// delay for 100ms before we try again
+	} else {
+	    break;
+	}
+    }
+    if (retry > 0) { warn("Network instability for %d msec", retry * 100); }
     return(rc);
 }
 
@@ -477,18 +507,43 @@ int	add_live_node(struct in6_addr *src) {
     if (node >= 0) goto EndError;				// skip on if already found
 
     node = find_live_node((struct in6_addr*)&zeros);		// Find an empty node
-    ERRORCHECK( node < 0, "Node list full!!\n", EndError);
+    ERRORCHECK( node < 0, "Node list full!!", EndError);
 
     memcpy(&other_nodes[node].address, src, SIN_LEN);		// Record address &
     other_nodes[node].state = NET_STATE_UNKNOWN;		// Set link and message states
     other_nodes[node].to = MSG_STATE_UNKNOWN;
     other_nodes[node].from = MSG_STATE_UNKNOWN;
-    other_nodes[node].delay = 0;
-    other_nodes[node].remote_delay = 0;
+    other_nodes[node].to_seq = 0;				// Reset Payload to/from sequence numbers
+    other_nodes[node].from_seq = 0;
 ENDERROR;
     return(node);
 }
 
+//
+//	Get the Active nodes id from the name
+//	find any node if name blank
+//
+int	get_active_node(char *name) {
+    int node;
+    int found = -1;
+
+    for(node = 0; node < NO_NETWORKS; node++) {			// Look at each network
+	if (other_nodes[node].state == NET_STATE_UP) {		// and check if marked as up
+	    if ((strcmp(name, "") == 0) |			// If looing for any
+		(strcmp(name, other_nodes[node].name) == 0)) {	// or looking for specific
+		found = node;					// identify active node found
+	    	break;
+	    }
+	}
+    }
+    return( found );
+}
+//
+//	Find any Active nodes & return id
+//
+int	find_active_node() {
+    return( get_active_node(""));
+}
 //
 //	Update local host Name & IPv4 Address
 //
@@ -499,17 +554,18 @@ void	update_my_ip_details() {
 
 
     rc = gethostname(my_hostname, HOSTNAME_LEN-1);		// Obtain local host name
-    ERRORCHECK(rc < 0, "Invalid host name\n", EndError);
+    ERRORCHECK(rc < 0, "Invalid host name", EndError);
 
     my_hostname[HOSTNAME_LEN-1] = '\0';				// Endure name  string terminated
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);			// find IPv4 socket
-    ERRORCHECK(fd < 0, "IPv4 Socket error\n", ErrnoError);
+    ERRORCHECK(fd < 0, "IPv4 Socket error", ErrnoError);
     ifr.ifr_addr.sa_family = AF_INET;
     strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
 
     rc = ioctl(fd, SIOCGIFADDR, &ifr);
-    ERRORCHECK(rc < 0, "Invalid host name\n", ErrnoError);
+    if ((rc < 0) && (errno == EADDRNOTAVAIL)) { goto IOCTLError; }
+    ERRORCHECK(rc < 0, "IO ctl Error", ErrnoError);
     close(fd);
 
     memcpy(&my_ipv4_addr, &(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr), SIN4_LEN);
@@ -517,20 +573,30 @@ void	update_my_ip_details() {
 ERRORBLOCK(ErrnoError);
     warn("Errno (%d)", errno);
     close(fd);
+ERRORBLOCK(IOCTLError);
+    close(fd);
 ENDERROR;
 }
+//
+//	Return a pointer to my name
+//
+char 	*my_name() {
+
+    return(my_hostname);
+}
+
 
 //
 //	Cancel Reply Timer if all now received
 //
-void	cancel_reply_timer(struct timer_list *timers) {
+void	cancel_reply_timer() {
     int i;
 
-    for(i=0; i < NO_NETWORKS; i++) {			// Check all valid nodes for outstanding reply
+    for(i=0; i < NO_NETWORKS; i++) {				// Check all valid nodes for outstanding reply
 	if ((memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) &&
-	    (other_nodes[i].to == MSG_STATE_SENT)) { goto EndError; } // if we find one - bottle out
+	    ((other_nodes[i].to == MSG_STATE_SENT) | (other_nodes[i].to == MSG_STATE_FAILED))) { goto EndError; } // if we find one - bottle out
     }
-    cancel_timer(timers, TIMER_REPLY);				// None found we can cancel the timer
+    cancel_timer(TIMER_REPLY);					// None found we can cancel the timer
 
 ENDERROR;
 }
@@ -540,35 +606,17 @@ ENDERROR;
 //
 int	send_to_node(int node, char *payload, int payload_len) {
     int rc;
-
     rc = -1;
-    ERRORCHECK(other_nodes[node].state != NET_STATE_UP, "Send Payload - link down\n", EndError);	// Check Link UP
+    ERRORCHECK(other_nodes[node].state != NET_STATE_UP, "Send Payload - link down", EndError);	// Check Link UP
 
-    rc = send_network_msg(&other_nodes[node].address, MSG_TYPE_PAYLOAD, 0, payload, payload_len); // send out a specific message to this node
-    ERRORCHECK( rc < 0, "Network send error\n", EndError);
+    other_nodes[node].to_seq++;
+    rc = send_network_msg(&other_nodes[node].address, MSG_TYPE_PAYLOAD, payload, payload_len, other_nodes[node].to_seq); // send out a specific message to this node
+    if (rc < 0) { goto SendError; }
+    debug(DEBUG_DETAIL,"Payload to %s of type %d seq [%3d]\n", other_nodes[node].name, *(int *)payload, other_nodes[node].to_seq);
+
+ERRORBLOCK(SendError);
+    warn("Payload send error: Node %d, send error %d errno(%d)", node, rc, errno);
 
 ENDERROR;
     return(rc);
-}
-
-//
-//	Handle the delay calculation using NTP algorythm
-//
-//	delay = (T4-T1) - (T3-T2)
-//
-
-void	handle_delay_calc(int node, struct timeval t1, struct timeval t2, struct timeval t3, struct timeval t4, time_t remote_delay) {
-
-    time_t delay;
-
-    timersub(&t4, &t1, &t4);				// T4-T1
-    timersub(&t3, &t2, &t3);				// T3-T1
-    timersub(&t4, &t3, &t4);				// Delay in timeval
-
-    delay = (t4.tv_usec);			// convert to ms
-//    delay = (t4.tv_usec / 1000);			// convert to ms
-//    delay = (t4.tv_sec * 1000) + delay;
-
-    other_nodes[node].delay = delay;			// record the delay for this node
-    other_nodes[node].remote_delay = remote_delay;	// and seen by the counterpart node
 }

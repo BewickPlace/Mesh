@@ -122,6 +122,7 @@ int main(int argc, char **argv) {
     struct timer_list timers;				// Timers
     int payload_len;					// length of payload returned
     struct payload_pkt app_data;			// App payload data
+    char node_name[HOSTNAME_LEN];			// Node name
     parse_options(argc, argv);				// Parse command line parameters
     debug(DEBUG_ESSENTIAL, "Mesh starting in mode: %d\n", operating_mode);
 
@@ -130,11 +131,12 @@ int main(int argc, char **argv) {
 
     switch (operating_mode) {
     case OPMODE_MASTER:					// Only Master nodes are responsible for broadcasting
-	add_timer(&timers, TIMER_BROADCAST, 5);		// Set to refresh network in y seconds
+	add_timer(TIMER_BROADCAST, 5);			// Set to refresh network in y seconds
 	break;
 
     case OPMODE_SLAVE:
-	add_timer(&timers, TIMER_APPLICATION, 15);		// Set to refresh network in y seconds
+//	add_timer(TIMER_APPLICATION, 15);		// Set to refresh network in y seconds
+//	now done when link comes up
 	break;
     }
 
@@ -142,19 +144,19 @@ int main(int argc, char **argv) {
 	wait_on_network_timers(&timers); 		// Wait for message or timer expiory
 
 	if (check_network_msg()) {			// If a message is available
-	    handle_network_msg(&timers, (char *)&app_data, &payload_len);	// handle the network message
-	    handle_app_msg(&app_data, payload_len);				// handle application specific messages
+	    handle_network_msg(&node_name[0], (char *)&app_data, &payload_len);	// handle the network message
+	    handle_app_msg(&app_data, payload_len);			// handle application specific messages
 	}
 	switch (check_timers(&timers)) {		// check which timer has expired
 	case TIMER_BROADCAST:				// On Broadcast timer
 	    broadcast_network();			// send out broadcast message to contact other nodes
-	    add_timer(&timers, TIMER_BROADCAST, 20);	// and set to broadcast again in y seconds
+	    add_timer(TIMER_BROADCAST, 20);		// and set to broadcast again in y seconds
 	    break;
 
 	case TIMER_PING:
 	    if (check_live_nodes()) {			// On Ping check the network
-		add_timer(&timers, TIMER_REPLY, 2);	// Expire replies if not received within x secoonds
-		add_timer(&timers, TIMER_PING, 20);	// and set to Ping again in y seconds
+		add_timer(TIMER_REPLY, 2);		// Expire replies if not received within x secoonds
+		add_timer(TIMER_PING, 20);		// and set to Ping again in y seconds
 	    }
 	    break;
 

@@ -20,28 +20,40 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-#define NO_TIMERS 4					// Number of Timers
-#define TIMER_NONE -1					// Invalid Timer
+#define NO_TIMERS 	9				// Number of Timers
+#define TIMER_NONE 	-1				// Invalid Timer
 #define TIMER_BROADCAST 0				// Broadcast Refresh Timer
-#define TIMER_PING 1					// Ping timer
-#define TIMER_REPLY 2					// Reply timeout timer
+#define TIMER_PING 	1				// Ping timer
+#define TIMER_REPLY 	2				// Reply timeout timer
 #define TIMER_APPLICATION 3				// Application timeout timer
+#define TIMER_CONTROL	4				// Boost timer
+#define TIMER_SETPOINT 	5				// Boost timer
+#define TIMER_BOOST 	6				// Boost timer
+#define TIMER_DISPLAY 	7				// Display screen timout
+#define TIMER_LOGGING 	8				// Logging timeout
 
 struct timer_list {					// Timer datastructure
 		struct timeval timers[NO_TIMERS];	// Array of individual timers
 		struct timeval wait_time;		// wait timer
 	};
 
-void    initialise_timers(struct timer_list *timers);
+void    initialise_timers();
 
-void	add_timer(struct timer_list *timers, int timer, int delay);
+void	add_timer(int timer, int delay);
 
-void	cancel_timer(struct timer_list *timers, int timer);
+void	cancel_timer(int timer);
 
-struct timeval *next_timers(struct timer_list *timers);
+struct timeval *next_timers();
 
-int	check_timers(struct timer_list *timers);
+void	adjust_timers();
 
-void	display_timers(struct timer_list *timers);
+int	check_timers();
 
+void	display_timers();
 
+int	dayoftheweek();
+
+int	timeto15min();
+int	timeto5min();
+int	timeto1min();
+int	timetosec(int n);

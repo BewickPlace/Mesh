@@ -40,6 +40,7 @@ THE SOFTWARE.
 //#include <netinet/ip.h>
 //#include <arpa/inet.h>
 //#include <net/if.h>
+#include <wiringPi.h>
 
 #include "errorcheck.h"
 #include "timers.h"
@@ -47,11 +48,15 @@ THE SOFTWARE.
 #include "application.h"
 
 void	notify_link_up() {
-    printf("UP\n");
+    debug(DEBUG_ESSENTIAL, "UP\n");
+
+    add_timer(TIMER_APPLICATION, 1);
     }
 
 void	notify_link_down() {
-    printf("DOWN\n");
+    debug(DEBUG_ESSENTIAL, "DOWN\n");
+
+    cancel_timer(TIMER_APPLICATION);
     }
 
 void	handle_app_msg(struct payload_pkt *payload, int payload_len) {
@@ -62,11 +67,16 @@ void	handle_app_msg(struct payload_pkt *payload, int payload_len) {
 }
 
 void	handle_app_timer(int sock) {
-    struct payload_pkt app_data = {PAYLOAD_TYPE,"ABCDEFGHIJK\0" };
+    struct payload_pkt app_data = {PAYLOAD_TYPE,"TEST MSG...\0" };
     int node = 0;
+    int i;
 
     debug(DEBUG_ESSENTIAL, "Handle App timeout\n");
 
-    send_to_node(node, (char *) &app_data, sizeof(app_data));
+    for (i=0; i< 20; i++) {			// Send a burst of test messages
+	send_to_node(node, (char *) &app_data, sizeof(app_data));
+	delay(50);
+    }
 
+    add_timer(TIMER_APPLICATION, 5);		// try again in n sec
     }

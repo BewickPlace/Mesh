@@ -21,6 +21,8 @@ THE SOFTWARE.
 */
 
 #define	NO_NETWORKS 10
+#define HOSTNAME_LEN    14                                      // Max supported host name length including null
+
 
 #define NET_STATE_UNKNOWN 0
 #define NET_STATE_DOWN 	1
@@ -32,9 +34,11 @@ THE SOFTWARE.
 #define MSG_STATE_FAILED 3
 #define MSG_STATE_OK 	4
 
-int	initialise_network(int max_payload_len, void (*up_callback)(void), void (*down_callback)(void));
+int	initialise_network(int max_payload_len, void (*up_callback)(char *name), void (*down_callback)(char *name));
 
-void	wait_on_network_timers(struct timer_list *timers);
+void	network_CLOSE();
+
+void	wait_on_network_timers();
 
 void	broadcast_network();
 
@@ -44,8 +48,14 @@ void	expire_live_nodes();
 
 void	display_live_network();
 
+int	get_active_node(char *name);
+
+int	find_active_node();
+
 int	check_network_msg();
 
-void	handle_network_msg(struct timer_list *timers, char *payload, int *payload_len);
+void	handle_network_msg(char *node_name, char *payload, int *payload_len);
 
 int	send_to_node(int node, char *payload, int payload_len);
+
+char	*my_name();
