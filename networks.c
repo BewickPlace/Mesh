@@ -60,6 +60,13 @@ struct net {							// Network descriptior
 	struct in_addr addripv4;				// IPv4 address
 	unsigned char to_seq;					// Payload sequence number ~ to
 	unsigned char from_seq;					// Payload sequence number ~ from
+								// Network statistics
+	int tx;							// Packets Transmitted
+	int rx;							// Packets Received
+	int ping_sent;						// Pings sent
+	int payload_recv;					// Payloads received
+	int ping_err;						// Ping lost error
+	int payload_err;					// Payload sequence error
 	};
 
 static int netsock;						// network socket
@@ -69,9 +76,9 @@ struct in_addr my_ipv4_addr;					// & IPv4 address
 static struct net other_nodes[NO_NETWORKS];			// Main network descriptor
 static fd_set readfds;						// Network file descriptor
 
-static unsigned int protocol_port = 5359;			// IPv6 multicast port & address
+static unsigned int protocol_port = 5350;			// IPv6 multicast port & address
 static struct in6_addr multicast_address;
-#define MULTICAST "ff02::cca6:c0f9:e182:5359"
+#define MULTICAST "ff02::cca6:c0f9:e182:5350"
 #define SIN_LEN 16
 #define SIN4_LEN 4
 
@@ -196,6 +203,7 @@ void	network_CLOSE() {
 void	wait_on_network_timers() {
     int rc;
     struct timeval *wait;
+    FD_ZERO(&readfds);
     wait = next_timers();
     debug(DEBUG_DETAIL, "Wait on read or timeout %lds\n", wait->tv_sec);
     if (wait->tv_sec > 0L) {					// As long as next timer not expired
@@ -256,9 +264,12 @@ int	check_live_nodes() {
 		    if (link_down_callback != NULL) link_down_callback(other_nodes[i].name);	// run callback if defined
             	}
 	        rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0); // send out a specific message to this node
-		if (rc < 0) { warn("Ping send error: Node %d, send error %d errno(%d)", i, rc, errno); }
+		if (rc < 0) { warn("PING send error: Node %d, send error %d errno(%d)", i, rc, errno); }
 	        other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
                 other_nodes[i].from = MSG_STATE_UNKNOWN;		// and received status unknown
+
+		other_nodes[i].tx++;
+		other_nodes[i].ping_sent++;
 		sent = 1;
 	    }
 	}
@@ -273,14 +284,20 @@ int	check_live_nodes() {
 //
 void	expire_live_nodes() {
     int i;
+    int rc;
 
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if ((memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) && // if an address is defined
 	    (other_nodes[i].state != NET_STATE_DOWN) &&
 	    ((other_nodes[i].to == MSG_STATE_SENT) | (other_nodes[i].to == MSG_STATE_FAILED))) {
 
+	    other_nodes[i].ping_err++;				// Record lost PING error
+
 	    other_nodes[i].to = MSG_STATE_FAILED;		// mark this node as failed
-	    send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0); // Re-Ping failed node
+	    rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0); // Re-Ping failed node
+	    if (rc < 0) { warn("Re-PING send error: Node %d, send error %d errno(%d)", i, rc, errno); }
+	    other_nodes[i].tx++;
+	    other_nodes[i].ping_sent++;
 	    add_timer(TIMER_REPLY, 3);
 	    debug(DEBUG_TRACE, "Link to %s timed out, retry ping\n", other_nodes[i].name);
 	}
@@ -312,6 +329,50 @@ void	display_live_network() {
 }
 
 //
+//	Report Network Statistics
+//
+void	report_network_stats() {
+    int i;
+    int ping_rate;
+    int payload_rate;
+
+    for (i=0; i < NO_NETWORKS; i++) {					// For each of the networks
+	if( memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { 	// if an address is defined
+									// Report statistics
+	    other_nodes[i].payload_recv = other_nodes[i].payload_recv + other_nodes[i].payload_err;	// add back in missed packets to total
+													// pings already include missed replies
+	    ping_rate = (other_nodes[i].ping_err * 100)/other_nodes[i].ping_sent;
+	    payload_rate = (other_nodes[i].payload_err * 100)/other_nodes[i].payload_recv;
+	    if ((ping_rate > 1) | (payload_rate > 1)) {
+		debug(DEBUG_ESSENTIAL, "Network Stats %-12s, tx:rx[%d:%d] Ping:[%d of %d] Pay:[%d of %d]\n",
+		other_nodes[i].name,
+		other_nodes[i].tx,
+		other_nodes[i].rx,
+		other_nodes[i].ping_err,
+		other_nodes[i].ping_sent,
+		other_nodes[i].payload_err,
+		other_nodes[i].payload_recv);
+	    } else {
+		debug(DEBUG_TRACE, "Network Stats %-12s, tx:rx[%d:%d] Ping:[%d of %d] Pay:[%d of %d]\n",
+		other_nodes[i].name,
+		other_nodes[i].tx,
+		other_nodes[i].rx,
+		other_nodes[i].ping_err,
+		other_nodes[i].ping_sent,
+		other_nodes[i].payload_err,
+		other_nodes[i].payload_recv);
+	    }
+	    other_nodes[i].tx = 0;				// Reset Network statistics
+	    other_nodes[i].rx = 0;
+	    other_nodes[i].ping_sent = 0;
+	    other_nodes[i].payload_recv = 0;
+	    other_nodes[i].ping_err = 0;
+	    other_nodes[i].payload_err = 0;
+	}
+    }
+}
+
+//
 //	Check if a Network Message is available
 //
 int	check_network_msg() {
@@ -330,6 +391,7 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
     struct sockaddr_in6 sin6;
     int rc, node;
     char ipv4_string[40];
+    int error_count;
 
     memset(&msg, 0, sizeof(msg));				//Initialise message header
     iovec.iov_base = full_message;
@@ -341,7 +403,7 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
     *payload_len = 0;						// No payload yet
 
     rc = recvmsg(netsock, &msg, 0);
-    if (rc < EAGAIN) { goto EndError; }				//  If EAGAIN, skip to end without Warning message
+    if ((rc < 0) && (errno== EAGAIN)) { goto EndAgain; }	//  If EAGAIN, skip to end without Warning message
     ERRORCHECK( rc < 0, "Read message failed", ReadError);
 
     ERRORCHECK( rc < 2, "Truncated packet", EndError);
@@ -359,9 +421,14 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	ERRORCHECK(node < 0, "Unidentified payload source", EndError);
 
 	other_nodes[node].from_seq++;
+	other_nodes[node].rx++;
+	other_nodes[node].payload_recv++;
 	if (other_nodes[node].from_seq != message->payload_seq) {
 	    debug(DEBUG_TRACE, "Payload from %s received out of sequence [%d:%d]\n", node_name, message->payload_seq, other_nodes[node].from_seq);
-	    other_nodes[node].from_seq = message->payload_seq;
+	    error_count = message->payload_seq - other_nodes[node].from_seq;	// Calculate number of missed packets
+	    other_nodes[node].from_seq = message->payload_seq;			// Reset next expected sequence number
+	    other_nodes[node].payload_err =					// Maintain sequence error count
+		other_nodes[node].payload_err + (error_count < 0 ? 1 : error_count); // add missed packets or for advance packets just 1
 	}
 	debug(DEBUG_DETAIL,"Payload from %s of type %d seq [%3d]\n", node_name, *(int *)payload, other_nodes[node].from_seq);
 	return;							// and return
@@ -377,8 +444,11 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	if (node < 0) {						// if unknown source
 	    node = add_live_node(&sin6.sin6_addr);		// Add the source as a valid node
 
+	    other_nodes[node].rx++;
 	    if (message->type == MSG_TYPE_ECHO) {		// and first Broadcast received
 		rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_ECHO_REPLY, NULL, 0, 0); // Send specific broadcast response
+		if (rc < 0) { warn("ECHO REPLY send error: Node %d, send error %d errno(%d)", node, rc, errno); }
+		other_nodes[node].tx++;
 	    }
 	    add_timer(TIMER_PING, 1);				// initiate PINGs
 	} else if (other_nodes[node].state == NET_STATE_DOWN) {
@@ -387,10 +457,17 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	    other_nodes[node].from = MSG_STATE_UNKNOWN;
 	    other_nodes[node].to_seq = 0;			// Reset Payload to/from sequence numbers
 	    other_nodes[node].from_seq = 0;
+	    other_nodes[node].tx = 0;				// Reset Network statistics
+	    other_nodes[node].rx = 0;
+	    other_nodes[node].ping_sent = 0;
+	    other_nodes[node].payload_recv = 0;
+	    other_nodes[node].ping_err = 0;
+	    other_nodes[node].payload_err = 0;
 	}
 	break;
     case MSG_TYPE_REPLY:
 	ERRORCHECK( node < 0, "Network node unknown (REPLY)", EndError);
+	other_nodes[node].rx++;
 	debug(DEBUG_DETAIL, "Reply message received\n");
 	other_nodes[node].to = MSG_STATE_OK;			// Reply received - to stae is OK
 	if (other_nodes[node].state != NET_STATE_UP) {		// Link state changes
@@ -402,13 +479,15 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	cancel_reply_timer();					// Cancel reply timer if all now received
 	break;
     case MSG_TYPE_PING:
-	ERRORCHECK( node < 0, "Network node unknown (PING)", EndError);
+	if (node < 0) goto EndError;
+	other_nodes[node].rx++;
+
 	debug(DEBUG_DETAIL, "Ping message received\n");
 	other_nodes[node].from = MSG_STATE_RECEIVED;		// Ping request
 	rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_REPLY, NULL, 0, 0);	// Send reply
-	if (rc > 0) {
-	    other_nodes[node].from = MSG_STATE_OK;		// and note as such
-	}
+	if (rc < 0) { warn("REPLY send error: Node %d, send error %d errno(%d)", node, rc, errno); }
+	else {other_nodes[node].from = MSG_STATE_OK; }		// and note as such
+	other_nodes[node].tx++;
 	break;
     default:
 	warn("Neither Ping nor Replay received");
@@ -418,6 +497,8 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 ERRORBLOCK(ReadError);
     warn("Read error: error %d errno(%d)", rc, errno);
     *payload_len = 0;						// Ensure No payload
+ERRORBLOCK(EndAgain);
+    debug(DEBUG_ESSENTIAL, "EAGAIN error %d:%d\n", rc, errno);
 ENDERROR;
 }
 
@@ -515,6 +596,12 @@ int	add_live_node(struct in6_addr *src) {
     other_nodes[node].from = MSG_STATE_UNKNOWN;
     other_nodes[node].to_seq = 0;				// Reset Payload to/from sequence numbers
     other_nodes[node].from_seq = 0;
+    other_nodes[node].tx = 0;					// Reset Network statistics
+    other_nodes[node].rx = 0;
+    other_nodes[node].ping_sent = 0;
+    other_nodes[node].payload_recv = 0;
+    other_nodes[node].ping_err = 0;
+    other_nodes[node].payload_err = 0;
 ENDERROR;
     return(node);
 }
@@ -612,6 +699,7 @@ int	send_to_node(int node, char *payload, int payload_len) {
     other_nodes[node].to_seq++;
     rc = send_network_msg(&other_nodes[node].address, MSG_TYPE_PAYLOAD, payload, payload_len, other_nodes[node].to_seq); // send out a specific message to this node
     if (rc < 0) { goto SendError; }
+    other_nodes[node].tx++;
     debug(DEBUG_DETAIL,"Payload to %s of type %d seq [%3d]\n", other_nodes[node].name, *(int *)payload, other_nodes[node].to_seq);
 
 ERRORBLOCK(SendError);

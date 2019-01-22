@@ -187,6 +187,7 @@ int timetoXmin(int X) {
     return((int)seconds);		// return this figure
 }
 
+int	timeto1hour() { return(timetoXmin(60)); }
 int	timeto15min() { return(timetoXmin(15)); }
 int	timeto5min()  { return(timetoXmin(5)); }
 int	timeto1min()  { return(timetoXmin(1)); }

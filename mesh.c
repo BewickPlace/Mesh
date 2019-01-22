@@ -139,6 +139,7 @@ int main(int argc, char **argv) {
 //	now done when link comes up
 	break;
     }
+    add_timer(TIMER_STATS, timeto1hour());		// Report Network Efficiency stats hourly
 
     while (!shutdown) {					// While NOT shutdown
 	wait_on_network_timers(&timers); 		// Wait for message or timer expiory
@@ -162,6 +163,11 @@ int main(int argc, char **argv) {
 
 	case TIMER_REPLY:
 	    expire_live_nodes();			//  Expire other nodes where reply has timed out
+	    break;
+
+	case TIMER_STATS:
+	    report_network_stats();			// Report network efficiency stats hourly
+	    add_timer(TIMER_STATS, timeto1hour());	// Set to refresh network in 1 hour
 	    break;
 
 	case TIMER_APPLICATION:
