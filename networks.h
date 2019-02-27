@@ -61,3 +61,5 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len);
 int	send_to_node(int node, char *payload, int payload_len);
 
 char	*my_name();
+
+void	timeout_payload();
