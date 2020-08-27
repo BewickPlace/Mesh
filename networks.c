@@ -865,7 +865,7 @@ void	timeout_payload() {
     int node;
     int found = 0;
 
-    debug(DEBUG_TRACE,"Timeout payloads\n");
+    debug(DEBUG_INFO,"Timeout payloads\n");
     for(node = 0; node < NO_NETWORKS; node++) {
 	if (other_nodes[node].payload != NULL) {
 	    resend_payload(node, other_nodes[node].payload, other_nodes[node].payload_len);

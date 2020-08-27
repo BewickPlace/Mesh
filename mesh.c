@@ -27,10 +27,10 @@ THE SOFTWARE.
 #include <errno.h>
 #include <getopt.h>
 
-//#include <unistd.h>
+#include <unistd.h>
 //#include <signal.h>
 //#include <assert.h>
-//#include <fcntl.h>
+#include <fcntl.h>
 //#include <sys/time.h>
 //#include <time.h>
 //#include <sys/types.h>
@@ -49,6 +49,10 @@ THE SOFTWARE.
 #define	OPMODE_MASTER	0				// Node operating modes
 #define	OPMODE_SLAVE	1				//
 static int	operating_mode = OPMODE_MASTER;		// Default operating mode (changed by command line)
+
+struct app {
+    char	*logfile;
+    } app;
 
 void usage(char *progname) {
     printf("Usage: %s [options...]\n", progname);
@@ -102,7 +106,7 @@ int parse_options(int argc, char **argv) {
                 break;
 
             case 'l':
-//                config.logfile = optarg;
+                app.logfile = optarg;
                 break;
             case 'e':
 //                config.errfile = optarg;
@@ -110,6 +114,23 @@ int parse_options(int argc, char **argv) {
         }
     }
     return optind;
+}
+//
+//      Open Correct Logfile
+//
+
+void    open_logfile() {
+    if (app.logfile) {                                  // Logfile is specified on command line
+        int log_fd = open(app.logfile,                  // Open appropriately
+                O_WRONLY | O_CREAT | O_APPEND,
+                S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+                                                        // Warn and continue if can't open
+        ERRORCHECK( log_fd < 0, "Could not open logfile", EndError);
+
+        dup2(log_fd, STDERR_FILENO);
+        setvbuf (stderr, NULL, _IOLBF, BUFSIZ);
+    }
+ENDERROR;
 }
 
 //
@@ -124,6 +145,7 @@ int main(int argc, char **argv) {
     struct payload_pkt app_data;			// App payload data
     char node_name[HOSTNAME_LEN];			// Node name
     parse_options(argc, argv);				// Parse command line parameters
+    open_logfile();
     debug(DEBUG_ESSENTIAL, "Mesh starting in mode: %d\n", operating_mode);
 
     initialise_network(sizeof(struct payload_pkt),notify_link_up, notify_link_down);	// Initialise the network details with callbacks
@@ -139,7 +161,7 @@ int main(int argc, char **argv) {
 //	now done when link comes up
 	break;
     }
-    add_timer(TIMER_STATS, timeto5min());		// Report Network Efficiency stats hourly
+    add_timer(TIMER_STATS, timeto1min());		// Report Network Efficiency stats hourly
 
     while (!shutdown) {					// While NOT shutdown
 	wait_on_network_timers(&timers); 		// Wait for message or timer expiory
@@ -167,7 +189,7 @@ int main(int argc, char **argv) {
 
 	case TIMER_STATS:
 	    report_network_stats();			// Report network efficiency stats hourly
-	    add_timer(TIMER_STATS, timeto1hour());	// Set to refresh network in 1 hour
+	    add_timer(TIMER_STATS, timeto1min());		// Report Network Efficiency stats hourly
 	    break;
 
 	case TIMER_PAYLOAD_ACK:
