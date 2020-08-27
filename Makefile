@@ -15,20 +15,20 @@ LDLIBS = -lrt -lwiringPi
 mesh: $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o mesh $(OBJS) $(LDLIBS)
 
-.PHONY: all install.minimal install
-
 all: mesh
 
-install.minimal: all
+install: mesh
+	install -m 775 -d $(PREFIX)/bin
+	install -m 775 mesh $(PREFIX)/bin/mesh
+ifeq ($(wildcard /etc/mesh.conf),)
+	install -m 666 scripts/mesh.conf /etc/mesh.conf
+endif
+ifeq ($(wildcard /etc/systemd/system/mesh.service),)
+	install -m 755 scripts/mesh.service /etc/systemd/system/mesh.service
+endif
 
-install: all install.minimal
-
-.PHONY: uninstall
-
-uninstall:
-
-.PHONY: clean
-
-clean:
-	-rm -f mesh
-	-rm -f *.o *~ core TAGS gmon.out
+clear:
+	rm -f /etc/mesh.conf
+	rm -f /etc/systemd/system/mesh.service
+	rm -f /var/log/mesh.log
+	rm -f *.o *~ core TAGS gmon.out

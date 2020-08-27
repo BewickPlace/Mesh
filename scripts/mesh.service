@@ -1,0 +1,12 @@
+[Unit]
+Description=WiPi Network Test Service
+After=network.target
+
+[Service]
+EnvironmentFile=/etc/mesh.conf
+ExecStart=/usr/local/bin/mesh $MODE $DEBUG  --log $LOGFILE
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
