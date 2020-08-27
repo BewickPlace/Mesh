@@ -81,6 +81,7 @@ struct net {							// Network descriptior
 	};
 
 static int netsock;						// network socket
+static char if_name[IF_NAMESIZE];				// interface name
 static void (*link_up_callback)(char *name), (*link_down_callback)(char *name);		// Link callback functions
 static char my_hostname[HOSTNAME_LEN];				// My hostname
 struct in_addr my_ipv4_addr;					// & IPv4 address
@@ -136,8 +137,14 @@ int	initialise_network(int max_payload_len, void (*up_callback)(char *name), voi
 
     FD_ZERO(&readfds);
 
-    ifindex = if_nametoindex("wlan0");			// Use the wireless network interface
+    strncpy(if_name, "wlan0", IFNAMSIZ-1);
+    ifindex = if_nametoindex(if_name);			// Use the wireless network interface
+    if (ifindex <=0) {
+        strncpy(if_name, "eth0", IFNAMSIZ-1);		// Otherwise use LAN network interface
+	ifindex = if_nametoindex(if_name);
+    }
     ERRORCHECK( ifindex <=0, "uknown interface type", die);
+    debug(DEBUG_ESSENTIAL, "Using interface %s\n", if_name);
 
     rc = inet_pton(AF_INET6, MULTICAST, &multicast_address);
     ERRORCHECK( rc < 0, "Protocol Group error", die);
@@ -722,7 +729,7 @@ void	update_my_ip_details() {
     fd = socket(AF_INET, SOCK_DGRAM, 0);			// find IPv4 socket
     ERRORCHECK(fd < 0, "IPv4 Socket error", ErrnoError);
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
+    strncpy(ifr.ifr_name, if_name, IFNAMSIZ-1);
 
     rc = ioctl(fd, SIOCGIFADDR, &ifr);
     if ((rc < 0) && (errno == EADDRNOTAVAIL)) { goto IOCTLError; }
@@ -837,7 +844,7 @@ void	timeout_payload() {
     int node;
     int found = 0;
 
-    debug(DEBUG_TRACE,"Timeout payloads\n");
+    debug(DEBUG_INFO,"Timeout payloads\n");
     for(node = 0; node < NO_NETWORKS; node++) {
 	if (other_nodes[node].payload != NULL) {
 	    resend_payload(node, other_nodes[node].payload, other_nodes[node].payload_len);

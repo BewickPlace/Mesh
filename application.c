@@ -63,7 +63,7 @@ void	handle_app_msg(struct payload_pkt *payload, int payload_len) {
 
     if( payload_len == 0) { return; }		// skip out if nothing to do
 
-    debug(DEBUG_TRACE, "Payload Received of type %d %s, len %d\n", payload->type, payload->data, payload_len);
+    debug(DEBUG_DETAIL, "Payload Received of type %d %s, len %d\n", payload->type, payload->data, payload_len);
 }
 
 void	handle_app_timer(int sock) {
@@ -71,7 +71,7 @@ void	handle_app_timer(int sock) {
     int node = 0;
     int i;
 
-    debug(DEBUG_TRACE, "Handle App timeout\n");
+    debug(DEBUG_INFO, "Handle App timeout >>> send burst of messages\n");
 
     for (i=0; i< 20; i++) {			// Send a burst of test messages
 	send_to_node(node, (char *) &app_data, sizeof(app_data));

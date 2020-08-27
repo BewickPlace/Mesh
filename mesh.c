@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
 //	now done when link comes up
 	break;
     }
-    add_timer(TIMER_STATS, timeto1hour());		// Report Network Efficiency stats hourly
+    add_timer(TIMER_STATS, timeto5min());		// Report Network Efficiency stats hourly
 
     while (!shutdown) {					// While NOT shutdown
 	wait_on_network_timers(&timers); 		// Wait for message or timer expiory
