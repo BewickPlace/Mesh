@@ -161,7 +161,12 @@ int main(int argc, char **argv) {
 //	now done when link comes up
 	break;
     }
-    add_timer(TIMER_STATS, timeto1min());		// Report Network Efficiency stats hourly
+
+    if (debuglev == DEBUG_ESSENTIAL) {
+	add_timer(TIMER_STATS, timeto1hour());		// Report Network Efficiency stats hourly
+    } else {
+	add_timer(TIMER_STATS, timeto1min());		// Report Network Efficiency stats regularly
+    }
 
     while (!shutdown) {					// While NOT shutdown
 	wait_on_network_timers(&timers); 		// Wait for message or timer expiory
@@ -189,7 +194,11 @@ int main(int argc, char **argv) {
 
 	case TIMER_STATS:
 	    report_network_stats();			// Report network efficiency stats hourly
-	    add_timer(TIMER_STATS, timeto1min());		// Report Network Efficiency stats hourly
+	    if (debuglev == DEBUG_ESSENTIAL) {
+		add_timer(TIMER_STATS, timeto1hour());		// Report Network Efficiency stats hourly
+	    } else {
+		add_timer(TIMER_STATS, timeto1min());		// Report Network Efficiency stats regularly
+	    }
 	    break;
 
 	case TIMER_PAYLOAD_ACK:
