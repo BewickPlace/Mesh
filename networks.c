@@ -46,6 +46,7 @@ THE SOFTWARE.
 int	send_network_msg(struct in6_addr *dest, int type, char *payload, int payload_len, unsigned int seen, unsigned int payload_seq);	// Local procedures
 int	find_live_node(struct in6_addr *src);
 int	add_live_node(struct in6_addr *src);
+void	reset_live_node(int node);
 void	update_my_ip_details();
 void	cancel_reply_timer();
 void	save_payload(int node, char *payload, int payload_len);
@@ -477,7 +478,7 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	memcpy(node_name, message->src_name, HOSTNAME_LEN);	// Return Hostname
 
 	node = get_active_node(node_name);			// find which node this is
-	ERRORCHECK(node < 0, "Unidentified payload source", EndError);
+	if (node < 0) {goto EndError;}
 
 	previous_from_seq = other_nodes[node].from_seq++;
 	other_nodes[node].rx++;
@@ -511,7 +512,7 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
     switch (message->type) {					// Handle different message types
     case MSG_TYPE_ECHO:
     case MSG_TYPE_ECHO_REPLY:
-	debug(DEBUG_DETAIL, "Broadcast message received\n");	// Manage creation of live node
+	debug(DEBUG_DETAIL, "Broadcast message received %d\n", node);	// Manage creation of live node
 
 	if (node < 0) {						// if unknown source
 	    node = add_live_node(&sin6.sin6_addr);		// Add the source as a valid node
@@ -524,22 +525,15 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	    }
 	    add_timer(TIMER_PING, 2);				// initiate PINGs
 	} else if (other_nodes[node].state == NET_STATE_DOWN) {
-	    other_nodes[node].state = NET_STATE_UNKNOWN;	// Set link and message states as though new
-	    other_nodes[node].to = MSG_STATE_UNKNOWN;
-	    other_nodes[node].from = MSG_STATE_UNKNOWN;
-	    other_nodes[node].to_seq = 0;			// Reset Payload to/from sequence numbers
-	    other_nodes[node].from_seq = 0;
-	    other_nodes[node].tx = 0;				// Reset Network statistics
-	    other_nodes[node].rx = 0;
-	    other_nodes[node].ping_sent = 0;
-	    other_nodes[node].ping_seen = 0;
-	    other_nodes[node].reply_seen = 0;
-	    other_nodes[node].reply_tx = 0;
-	    other_nodes[node].payload_sent = 0;
-	    other_nodes[node].payload_resent = 0;
-	    other_nodes[node].payload_recv = 0;
-	    other_nodes[node].payload_dup = 0;
-	    other_nodes[node].payload_err = 0;
+	    reset_live_node(node);				// Reset counters and states
+
+	    other_nodes[node].rx++;
+	    if (message->type == MSG_TYPE_ECHO) {		// and first Broadcast received
+		rc = send_network_msg(&sin6.sin6_addr, MSG_TYPE_ECHO_REPLY, NULL, 0, 0, 0); // Send specific broadcast response
+		if (rc < 0) { warn("ECHO REPLY send error: Node %d, send error %d errno(%d)", node, rc, errno); }
+		other_nodes[node].tx++;
+	    }
+	    add_timer(TIMER_PING, 2);				// initiate PINGs
 	}
 	break;
     case MSG_TYPE_REPLY:
@@ -688,6 +682,16 @@ int	add_live_node(struct in6_addr *src) {
     ERRORCHECK( node < 0, "Node list full!!", EndError);
 
     memcpy(&other_nodes[node].address, src, SIN_LEN);		// Record address &
+    reset_live_node(node);					// reset counters and states
+
+ENDERROR;
+    return(node);
+}
+
+//
+//	Reset a node in the node list
+//
+void	reset_live_node(int node) {
     other_nodes[node].state = NET_STATE_UNKNOWN;		// Set link and message states
     other_nodes[node].to = MSG_STATE_UNKNOWN;
     other_nodes[node].from = MSG_STATE_UNKNOWN;
@@ -704,8 +708,6 @@ int	add_live_node(struct in6_addr *src) {
     other_nodes[node].payload_recv = 0;
     other_nodes[node].payload_dup = 0;
     other_nodes[node].payload_err = 0;
-ENDERROR;
-    return(node);
 }
 
 //
