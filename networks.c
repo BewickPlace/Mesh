@@ -692,7 +692,7 @@ ENDERROR;
 //	Reset a node in the node list
 //
 void	reset_live_node(int node) {
-    other_nodes[node].state = NET_STATE_UNKNOWN;		// Set link and message states
+    other_nodes[node].state = NET_STATE_READY;			// Set link and message states
     other_nodes[node].to = MSG_STATE_UNKNOWN;
     other_nodes[node].from = MSG_STATE_UNKNOWN;
     other_nodes[node].to_seq = 0;				// Reset Payload to/from sequence numbers
