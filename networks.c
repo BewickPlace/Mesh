@@ -272,35 +272,47 @@ int	check_live_nodes() {
 
     for (i=0; i < NO_NETWORKS; i++) {				// For each of the networks
 	if (memcmp(&other_nodes[i].address, &zeros, SIN_LEN) != 0) { // if an address is defined
-								// Check to determine correct network status
-            if (other_nodes[i].state == NET_STATE_DOWN) {	// if has been down for an entire period
+
+	    switch (other_nodes[i].state) {			// Check to determine correct network status
+	    case NET_STATE_DOWN:				// if has been down for an entire period
 	   	other_nodes[i].state = NET_STATE_UNKNOWN;	// set state unknow and
                 memcpy(&other_nodes[i].address, &zeros, SIN_LEN); // Remove address
                 memcpy(&other_nodes[i].name, &zeros, HOSTNAME_LEN); // ... name
                 memcpy(&other_nodes[i].addripv4, &zeros, SIN4_LEN); // ... old IPv4 address
-	    } else {
+		break;
+
+	    case NET_STATE_READY:
+	    case NET_STATE_UP:
 		if ((other_nodes[i].to == MSG_STATE_FAILED) &&	// if both to and from states are questionable
 		    (other_nodes[i].from == MSG_STATE_UNKNOWN)) {
-		    other_nodes[i].state = NET_STATE_DOWN;	// Mark network as likely to be down
-		    inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
-		    debug(DEBUG_ESSENTIAL, "Link DOWN to node: %-12s (%s)\n", other_nodes[i].name, ipv4_string);
-		    if (link_down_callback != NULL) link_down_callback(other_nodes[i].name);	// run callback if defined
-		    delete_payload(i);				// Delete any saved payload
-            	}
+
+		    if (other_nodes[i].state == NET_STATE_UP) {
+			other_nodes[i].state = NET_STATE_DOWN;	// Mark network as likely to be down
+			inet_ntop(AF_INET, &other_nodes[i].addripv4, (char *)&ipv4_string, 40);
+			debug(DEBUG_ESSENTIAL, "Link DOWN to node: %-12s (%s)\n", other_nodes[i].name, ipv4_string);
+			if (link_down_callback != NULL) link_down_callback(other_nodes[i].name);	// run callback if defined
+			delete_payload(i);				// Delete any saved payload
+		    } else {
+			other_nodes[i].state = NET_STATE_DOWN;	// set state unknown
+		    }
+		}
 		if (other_nodes[i].skip_ping) {
                     debug(DEBUG_INFO, "Ping to %-12s skipped\n", other_nodes[i].name);
 		    other_nodes[i].skip_ping = 0;		// Enforce the next PING unless ACK received
 		} else {
-		    debug(DEBUG_INFO, "Ping to %-12s sent\n", other_nodes[i].name);
+		    debug(DEBUG_TRACE, "Ping to %-12s sent\n", other_nodes[i].name);
 		    rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0, 0); // send out a specific message to this node
 		    if (rc < 0) { warn("PING send error: Node %d, send error %d errno(%d)", i, rc, errno); }
 		    other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
 		    other_nodes[i].from = MSG_STATE_UNKNOWN;		// and received status unknown
-
 		    other_nodes[i].tx++;
 		    other_nodes[i].ping_sent++;
 		}
 		sent = 1;
+		break;
+
+	    default:
+		warn("Check Live, invalid network state");
 	    }
 	}
     }
@@ -852,6 +864,8 @@ int	resend_payload(int node, char *payload, int payload_len) {
     other_nodes[node].tx++;
     other_nodes[node].payload_resent++;
     debug(DEBUG_TRACE,"Payload resent to %s of type %d seq [%3d]\n", other_nodes[node].name, *(int *)payload, other_nodes[node].to_seq);
+    other_nodes[node].skip_ping = 0;			// Enforce the next PING unless ACK received
+
 
 ERRORBLOCK(SendError);
     warn("Payload send error: Node %d, send error %d errno(%d)", node, rc, errno);
