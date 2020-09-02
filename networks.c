@@ -300,7 +300,7 @@ int	check_live_nodes() {
                     debug(DEBUG_INFO, "Ping to %-12s skipped\n", other_nodes[i].name);
 		    other_nodes[i].skip_ping = 0;		// Enforce the next PING unless ACK received
 		} else {
-		    debug(DEBUG_TRACE, "Ping to %-12s sent\n", other_nodes[i].name);
+		    debug(DEBUG_INFO, "Ping to %-12s sent\n", other_nodes[i].name);
 		    rc = send_network_msg(&other_nodes[i].address, MSG_TYPE_PING, NULL, 0, 0, 0); // send out a specific message to this node
 		    if (rc < 0) { warn("PING send error: Node %d, send error %d errno(%d)", i, rc, errno); }
 		    other_nodes[i].to = MSG_STATE_SENT;			// mark this node as having send a message
