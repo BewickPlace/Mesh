@@ -500,7 +500,7 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 		other_nodes[node].skip_ping = 1;		// Valid Payload received - we can skip the next Ping as redundant
 
 	} else if (previous_from_seq == message->payload_seq) { // ignore duplicate packets
-	    debug(DEBUG_INFO, "Payload from %-12s duplicate [%d]\n", node_name, message->payload_seq);
+	    debug(DEBUG_TRACE, "Payload from %-12s duplicate [%d]\n", node_name, message->payload_seq);
 	    other_nodes[node].from_seq = message->payload_seq;	// Reset next expected sequence number
 	    *payload_len = 0;					// ignore duplicate packet
 	    other_nodes[node].payload_dup++;
@@ -587,7 +587,7 @@ void	handle_network_msg(char *node_name, char *payload, int *payload_len) {
 	if (node < 0) goto EndError;
 	other_nodes[node].rx++;
 
-	debug(DEBUG_DETAIL, "ACK message from %-12s received[%d]\n", message->src_name, message->payload_seq);
+	debug(DEBUG_TRACE, "ACK message from %-12s received[%d]\n", message->src_name, message->payload_seq);
 	ack_payload(node, message->payload_seq);
 	other_nodes[node].skip_ping = 1;			// ACK received - we can skip the next Ping as redundant
 	break;

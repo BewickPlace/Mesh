@@ -49,6 +49,7 @@ THE SOFTWARE.
 #define	OPMODE_MASTER	0				// Node operating modes
 #define	OPMODE_SLAVE	1				//
 static int	operating_mode = OPMODE_MASTER;		// Default operating mode (changed by command line)
+int		packet_rate = 0;			// Number of packets sent
 
 struct app {
     char	*logfile;
@@ -65,6 +66,7 @@ void usage(char *progname) {
     printf("    -h, --help          show this help\n");
     printf("    -m, --master        Master operating mode\n");
     printf("    -s, --slave         Slave operating mode\n");
+    printf("    -p, --packet=PACKET Number of packets sent per burst\n");
 
     printf("    -l, --log=FILE      redirect shairport's standard output to FILE\n");
     printf("                        If --error is not specified, it also redirects\n");
@@ -80,6 +82,7 @@ int parse_options(int argc, char **argv) {
         {"help",    no_argument,        NULL, 'h'},
         {"master",  no_argument,        NULL, 'm'},
         {"slave",   no_argument,        NULL, 's'},
+        {"packet",  required_argument,  NULL, 'p'},
 
         {"log",     required_argument,  NULL, 'l'},
         {"error",   required_argument,  NULL, 'e'},
@@ -88,7 +91,7 @@ int parse_options(int argc, char **argv) {
     int opt;
 
     while ((opt = getopt_long(argc, argv,
-                              "+hmsvl:e:",
+                              "+hmsvp:l:e:",
                               long_options, NULL)) > 0) {
         switch (opt) {
             default:
@@ -100,6 +103,9 @@ int parse_options(int argc, char **argv) {
                 break;
             case 's':
 		operating_mode = OPMODE_SLAVE;			// Set Node as Slave
+                break;
+            case 'p':
+		packet_rate = atoi(optarg);			// Set  packets per burst
                 break;
             case 'v':
                 debuglev++;

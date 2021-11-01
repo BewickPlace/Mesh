@@ -47,6 +47,8 @@ THE SOFTWARE.
 #include "networks.h"
 #include "application.h"
 
+extern int	packet_rate;
+
 void	notify_link_up() {
     debug(DEBUG_ESSENTIAL, "UP\n");
 
@@ -73,10 +75,10 @@ void	handle_app_timer(int sock) {
 
     debug(DEBUG_INFO, "Handle App timeout >>> send burst of messages\n");
 
-    for (i=0; i< 20; i++) {			// Send a burst of test messages
+    for (i=0; i< packet_rate; i++) {		// Send a burst of test messages
 	send_to_node(node, (char *) &app_data, sizeof(app_data));
 	delay(50);
     }
 
-    add_timer(TIMER_APPLICATION, 5);		// try again in n sec
+    add_timer(TIMER_APPLICATION, 20);		// try again in n sec
     }
